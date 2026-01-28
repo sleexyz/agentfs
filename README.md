@@ -10,19 +10,23 @@ Instant checkpointing for agentic development on macOS.
 To make any directory checkpointable:
 
 ```
-> agentfs manage foo
-> cd foo
+> agentfs manage ~/foo
+> cd ~/foo
 
-> agentfs checkpoint create
-Created v18 (83ms)
+> agentfs checkpoint create "init"
+Created v1 (83ms)
+
+...
 
 > agentfs list
 VERSION  MESSAGE                                   CREATED
-v18                                                32 seconds ago
-v17      Bash `sudo darwin-rebuild switch ...`...  53 seconds ago
-v16      Edit justfile (f55a4d56)                  1 minute ago
+v2      Edit justfile (f55a4d56)                  32 seconds ago
+v1      init                                      1 minute ago
 ...
 ```
+
+(TODO: document claude code hooks installation -- it runs before every operation.)
+
 
 ## How it works
 
