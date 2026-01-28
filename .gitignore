@@ -1,6 +1,7 @@
 # Go
 .go/
 /agentfs
+/agentfs-dev
 /cpbench
 /fswatch
 /hashbench
