@@ -10,22 +10,39 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
+        agentfs = pkgs.buildGoModule {
+          pname = "agentfs";
+          version = "0.1.0";
+          src = ./.;
+          vendorHash = "sha256-YS4tbIuJ4hMq8M4nZIXxuC38A5OYY6jiYvYVEDkGxJc=";
+          subPackages = [ "cmd/agentfs" ];
+        };
       in
       {
+        packages.default = agentfs;
+        packages.agentfs = agentfs;
+
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            go
-            gopls
-            gotools
-            go-tools
-            delve
-            sqlite
+          packages = [
+            agentfs
+            pkgs.go
+            pkgs.gopls
+            pkgs.gotools
+            pkgs.go-tools
+            pkgs.delve
+            pkgs.sqlite
           ];
 
           shellHook = ''
             export GOPATH="$PWD/.go"
             export PATH="$GOPATH/bin:$PATH"
           '';
+        };
+
+        apps.default = {
+          type = "app";
+          program = "${agentfs}/bin/agentfs";
         };
       });
 }
