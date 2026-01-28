@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"github.com/agentfs/agentfs/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +47,18 @@ Requires confirmation unless -f/--force is specified.`,
 		// Show progress
 		if storeManager.IsMounted(s.MountPath) {
 			fmt.Println("Unmounting...")
+		}
+
+		// Unregister from global registry before deleting
+		reg, err := registry.Open()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open registry: %v\n", err)
+		} else {
+			defer reg.Close()
+			// Ignore ErrNotFound - store might not be registered
+			if err := reg.Unregister(s.StorePath); err != nil && err != registry.ErrNotFound {
+				fmt.Fprintf(os.Stderr, "warning: failed to unregister store: %v\n", err)
+			}
 		}
 
 		if err := storeManager.Delete(s); err != nil {

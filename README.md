@@ -100,6 +100,28 @@ agentfs --store myproject checkpoint list
 
 Tested with a 36k file Next.js project including node_modules.
 
+## FAQ
+
+### Does AgentFS require a daemon?
+
+No. AgentFS is a pure CLI tool — each command runs, does its work, and exits. No background processes or services to manage.
+
+### Do checkpoints persist across reboots?
+
+Yes. The sparse bundle, checkpoints, and metadata are just files on disk. However, stores are **unmounted** after reboot. You can remount with `agentfs open <name>`, or commands will auto-remount when run from inside a project directory (using the `.agentfs` context file).
+
+### Should I exclude stores from Time Machine?
+
+Yes. AgentFS checkpoints are your version history — backing them up with Time Machine is redundant and can cause significant storage bloat (Time Machine would back up every band version). Exclude stores with:
+
+```bash
+tmutil addexclusion -p myproject.fs/
+```
+
+### Why sparse bundles instead of direct file cloning?
+
+Speed. A 36k file project compresses to ~100-150 bands. Cloning 150 bands with APFS reflinks takes ~60ms. Cloning 36k files directly would take ~1700ms. The sparse bundle acts as an aggregation layer that makes checkpoint operations O(bands) instead of O(files).
+
 ## License
 
 MIT

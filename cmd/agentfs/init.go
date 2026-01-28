@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentfs/agentfs/internal/context"
 	"github.com/agentfs/agentfs/internal/db"
+	"github.com/agentfs/agentfs/internal/registry"
 	"github.com/agentfs/agentfs/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +83,17 @@ If no name is provided, you will be prompted for one.`,
 		// Create .agentfs context file in the mount point
 		if err := context.WriteContext(s.MountPath, s.StorePath); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to create .agentfs file: %v\n", err)
+		}
+
+		// Register store in global registry
+		reg, err := registry.Open()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open registry: %v\n", err)
+		} else {
+			defer reg.Close()
+			if err := reg.Register(s.StorePath, s.MountPath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to register store: %v\n", err)
+			}
 		}
 
 		fmt.Printf("Created %s/\n", name+".fs")
