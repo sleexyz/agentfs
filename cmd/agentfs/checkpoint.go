@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -23,6 +25,15 @@ var checkpointCmd = &cobra.Command{
 }
 
 var cpAutoFlag bool
+var cpFromHookFlag bool
+
+// HookInput represents the JSON input from Claude Code hooks
+type HookInput struct {
+	SessionID     string                 `json:"session_id"`
+	ToolName      string                 `json:"tool_name"`
+	ToolInput     map[string]interface{} `json:"tool_input"`
+	HookEventName string                 `json:"hook_event_name"`
+}
 
 var cpCreateCmd = &cobra.Command{
 	Use:   "create [message]",
@@ -112,7 +123,7 @@ With --auto flag, the command:
 		if len(args) > 0 {
 			message = args[0]
 		} else if cpAutoFlag {
-			message = "auto"
+			message = generateAutoMessage()
 		}
 
 		cp, duration, err := cpManager.Create(cpkg.CreateOpts{
@@ -379,6 +390,7 @@ Requires confirmation unless -f/--force is specified.`,
 
 func init() {
 	cpCreateCmd.Flags().BoolVar(&cpAutoFlag, "auto", false, "auto-checkpoint mode (quiet, skip-if-unchanged)")
+	cpCreateCmd.Flags().BoolVar(&cpFromHookFlag, "from-hook", false, "read hook context from stdin (use with --auto)")
 	cpListCmd.Flags().IntVar(&cpListLimit, "limit", 0, "limit number of results")
 
 	checkpointCmd.AddCommand(cpCreateCmd)
@@ -399,4 +411,59 @@ func parseVersion(s string) (int, error) {
 		return 0, fmt.Errorf("version must be positive")
 	}
 	return v, nil
+}
+
+// generateAutoMessage creates a checkpoint message, optionally reading hook context from stdin
+func generateAutoMessage() string {
+	if !cpFromHookFlag {
+		return "auto"
+	}
+
+	// Read JSON from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return "auto"
+	}
+
+	var hookInput HookInput
+	if err := json.Unmarshal(data, &hookInput); err != nil {
+		return "auto"
+	}
+
+	// Build message parts
+	var parts []string
+
+	// Tool name
+	if hookInput.ToolName != "" {
+		parts = append(parts, hookInput.ToolName)
+	}
+
+	// Extract file path from tool_input if available
+	if hookInput.ToolInput != nil {
+		if filePath, ok := hookInput.ToolInput["file_path"].(string); ok && filePath != "" {
+			// Use just the filename for brevity
+			parts = append(parts, filepath.Base(filePath))
+		} else if cmd, ok := hookInput.ToolInput["command"].(string); ok && cmd != "" {
+			// For Bash, show truncated command
+			if len(cmd) > 30 {
+				cmd = cmd[:27] + "..."
+			}
+			parts = append(parts, fmt.Sprintf("`%s`", cmd))
+		}
+	}
+
+	// Session ID (short form)
+	if hookInput.SessionID != "" {
+		sessionShort := hookInput.SessionID
+		if len(sessionShort) > 8 {
+			sessionShort = sessionShort[:8]
+		}
+		parts = append(parts, fmt.Sprintf("(%s)", sessionShort))
+	}
+
+	if len(parts) == 0 {
+		return "auto"
+	}
+
+	return strings.Join(parts, " ")
 }
