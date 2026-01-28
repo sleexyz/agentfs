@@ -67,7 +67,8 @@ func (m *Manager) Create(storeName string, opts CreateOpts) (*db.Checkpoint, tim
 	versionPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
 	// Clone bands directory using APFS reflink (cp -Rc)
-	cmd = exec.Command("cp", "-Rc", bandsPath+"/", versionPath+"/")
+	// Use /bin/cp explicitly to ensure macOS native cp with clonefile support
+	cmd = exec.Command("/bin/cp", "-Rc", bandsPath+"/", versionPath+"/")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create checkpoint: %w\n%s", err, output)
@@ -209,7 +210,8 @@ func (m *Manager) Restore(storeName string, version int, createPreRestore bool) 
 	}
 
 	// Clone target checkpoint to bands
-	cmd := exec.Command("cp", "-Rc", targetPath+"/", bandsPath+"/")
+	// Use /bin/cp explicitly to ensure macOS native cp with clonefile support
+	cmd := exec.Command("/bin/cp", "-Rc", targetPath+"/", bandsPath+"/")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Restore backup and remount

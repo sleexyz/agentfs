@@ -16,7 +16,7 @@ Build a CLI tool that provides instant checkpoint (~20ms) and restore (<500ms) f
 - [x] Spec complete: `specs/agentfs-daemon.md`
 - [x] Architecture validated: sparse bundles + APFS reflinks
 - [x] CLI design inspired by OpenSprite patterns
-- [ ] User confirms: ready to build
+- [x] User confirms: ready to build
 
 ---
 
@@ -24,6 +24,7 @@ Build a CLI tool that provides instant checkpoint (~20ms) and restore (<500ms) f
 
 ### Project Setup
 
+- [x] Dev environment: `flake.nix` + `.envrc` (Go, gopls, sqlite)
 - [ ] Initialize Go module: `github.com/agentfs/agentfs`
 - [ ] Set up CLI with Cobra (subcommand structure)
 - [ ] Create SQLite schema for metadata
@@ -41,8 +42,7 @@ Build a CLI tool that provides instant checkpoint (~20ms) and restore (<500ms) f
   │   ├── use.go            # agentfs use
   │   ├── status.go         # agentfs status
   │   ├── checkpoint.go     # agentfs checkpoint (subcommand group)
-  │   ├── restore.go        # agentfs restore
-  │   └── diff.go           # agentfs diff
+  │   └── restore.go        # agentfs restore
   ├── internal/
   │   ├── store/            # Sparse bundle management
   │   ├── checkpoint/       # Checkpoint operations
@@ -168,16 +168,6 @@ Build a CLI tool that provides instant checkpoint (~20ms) and restore (<500ms) f
   Restored to v3 "added authentication" (412ms)
   ```
 
-### Diff
-
-- [ ] `agentfs diff [version]` — diff vs current
-- [ ] `agentfs diff <v1> <v2>` — diff between checkpoints
-  ```
-  Modified: src/app.ts (+50 -10)
-  Added:    src/utils.ts
-  Deleted:  src/old.ts
-  ```
-
 ### Polish
 
 - [ ] Global flags: `--store`, `--json`, `-f/--force`, `-h/--help`
@@ -216,8 +206,7 @@ agentfs
 │   ├── info <version>    Show checkpoint details
 │   └── delete <version>  Delete checkpoint
 │
-├── restore <version>     Restore to checkpoint (<500ms)
-└── diff [v1] [v2]        Show changes
+└── restore <version>     Restore to checkpoint (<500ms)
 ```
 
 ### Sparse Bundle Commands
@@ -313,6 +302,7 @@ CREATE INDEX idx_checkpoints_store ON checkpoints(store_id, version DESC);
 
 ## Out of Scope (Phase 1)
 
+- Diff command (`agentfs diff`) — Phase 2
 - Causality tracking (agent/action metadata) — Phase 2
 - Claude Code hooks — Phase 2
 - Remote sync — Phase N+1

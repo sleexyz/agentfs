@@ -133,6 +133,23 @@ All commands tested and working:
 
 ---
 
+## Bug Fix - 2026-01-27 Session 2
+
+**Fixed**: `cp -Rc` command failing in Nix environment
+
+The `cp -Rc` command uses macOS-specific `-c` flag for APFS clonefile (copy-on-write).
+When running in a Nix shell, GNU coreutils `cp` is used instead of macOS native `/bin/cp`,
+which doesn't support the `-c` flag.
+
+**Solution**: Changed `exec.Command("cp", "-Rc", ...)` to `exec.Command("/bin/cp", "-Rc", ...)`
+to explicitly use macOS native cp with clonefile support.
+
+**Verified benchmarks after fix:**
+- Checkpoint create: 40-65ms (with 155 files, 4 bands)
+- Restore: 499-630ms (meeting <500ms target on some runs)
+
+---
+
 ## COMPLETE - 2026-01-27
 
 **What was accomplished:**
@@ -154,4 +171,21 @@ All commands tested and working:
 - The .agentfs directory in home conflicts with .agentfs context files - check IsDir() when searching
 - Store operations should have "fast" variants that skip status updates for hot paths
 - hdiutil restore time is a macOS limitation - consider keeping stores mounted to avoid remount cost
+
+---
+
+## COMPLETE - 2026-01-27 Session 2 (Verification)
+
+**What was accomplished:**
+- Fixed critical bug: `cp -Rc` failing in Nix environment due to GNU coreutils
+- Full end-to-end verification of all CLI commands
+- Benchmarked checkpoint (40-65ms) and restore (499-630ms) operations
+
+**Key insights:**
+- Nix shell overrides system binaries - must use absolute paths for macOS-specific tools
+- APFS clonefile (`-c` flag) only works with `/bin/cp`, not GNU coreutils
+
+**Learnings for future iterations:**
+- Always use absolute paths for platform-specific binaries when running in Nix
+- Test in both native and Nix environments to catch PATH-related issues
 ---
