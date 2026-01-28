@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/agentfs/agentfs/internal/store"
+	"github.com/sleexyz/agentfs/internal/store"
 	"github.com/spf13/cobra"
 )
 

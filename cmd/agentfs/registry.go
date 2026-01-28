@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/agentfs/agentfs/internal/registry"
+	"github.com/sleexyz/agentfs/internal/registry"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )

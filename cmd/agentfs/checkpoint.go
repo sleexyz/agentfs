@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	cpkg "github.com/agentfs/agentfs/internal/checkpoint"
-	"github.com/agentfs/agentfs/internal/context"
-	"github.com/agentfs/agentfs/internal/db"
+	cpkg "github.com/sleexyz/agentfs/internal/checkpoint"
+	"github.com/sleexyz/agentfs/internal/context"
+	"github.com/sleexyz/agentfs/internal/db"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )

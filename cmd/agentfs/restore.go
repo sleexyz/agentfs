@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	cpkg "github.com/agentfs/agentfs/internal/checkpoint"
-	"github.com/agentfs/agentfs/internal/context"
-	"github.com/agentfs/agentfs/internal/db"
+	cpkg "github.com/sleexyz/agentfs/internal/checkpoint"
+	"github.com/sleexyz/agentfs/internal/context"
+	"github.com/sleexyz/agentfs/internal/db"
 	"github.com/spf13/cobra"
 )
 

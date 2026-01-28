@@ -1,4 +1,4 @@
-module github.com/agentfs/agentfs
+module github.com/sleexyz/agentfs
 
 go 1.22
 

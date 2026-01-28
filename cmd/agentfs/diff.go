@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/agentfs/agentfs/internal/context"
-	"github.com/agentfs/agentfs/internal/diff"
+	"github.com/sleexyz/agentfs/internal/context"
+	"github.com/sleexyz/agentfs/internal/diff"
 	"github.com/spf13/cobra"
 )
 

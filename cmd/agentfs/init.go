@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/agentfs/agentfs/internal/context"
-	"github.com/agentfs/agentfs/internal/db"
-	"github.com/agentfs/agentfs/internal/registry"
-	"github.com/agentfs/agentfs/internal/store"
+	"github.com/sleexyz/agentfs/internal/context"
+	"github.com/sleexyz/agentfs/internal/db"
+	"github.com/sleexyz/agentfs/internal/registry"
+	"github.com/sleexyz/agentfs/internal/store"
 	"github.com/spf13/cobra"
 )
 

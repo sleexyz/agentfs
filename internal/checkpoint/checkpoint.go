@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agentfs/agentfs/internal/db"
-	"github.com/agentfs/agentfs/internal/store"
+	"github.com/sleexyz/agentfs/internal/db"
+	"github.com/sleexyz/agentfs/internal/store"
 )
 
 // Manager manages checkpoints for a store

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/agentfs/agentfs/internal/registry"
+	"github.com/sleexyz/agentfs/internal/registry"
 	"github.com/spf13/cobra"
 )
 

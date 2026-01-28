@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agentfs/agentfs/internal/store"
+	"github.com/sleexyz/agentfs/internal/store"
 )
 
 // ChangeType represents the type of file change
