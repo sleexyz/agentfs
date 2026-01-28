@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -19,10 +20,12 @@ type StoreInfo struct {
 
 // Checkpoint represents a checkpoint record
 type Checkpoint struct {
-	ID        int64
-	Version   int
-	Message   string
-	CreatedAt time.Time
+	ID            int64
+	Version       int
+	Message       string
+	CreatedAt     time.Time
+	DurationMs    int64 // Duration of checkpoint creation in milliseconds
+	ParentVersion *int  // Version this checkpoint was created from (null for v1 or imports)
 }
 
 // DB wraps the per-store SQLite database (foo.fs/metadata.db)
@@ -91,8 +94,35 @@ func (d *DB) migrate() error {
 	);
 	`
 
-	_, err := d.db.Exec(schema)
-	return err
+	if _, err := d.db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Migration: Add duration_ms and parent_version columns if they don't exist
+	// SQLite ALTER TABLE ADD COLUMN with NULL default works on existing rows
+	migrations := []string{
+		"ALTER TABLE checkpoints ADD COLUMN duration_ms INTEGER",
+		"ALTER TABLE checkpoints ADD COLUMN parent_version INTEGER",
+	}
+
+	for _, migration := range migrations {
+		// Ignore "duplicate column" errors - column already exists
+		_, err := d.db.Exec(migration)
+		if err != nil && !isDuplicateColumnError(err) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// isDuplicateColumnError checks if the error is a duplicate column error
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// SQLite returns "duplicate column name" error
+	return strings.Contains(err.Error(), "duplicate column")
 }
 
 // InitStore initializes store info in the database
@@ -127,9 +157,9 @@ func (d *DB) GetStoreInfo() (*StoreInfo, error) {
 // CreateCheckpoint creates a new checkpoint record
 func (d *DB) CreateCheckpoint(cp *Checkpoint) error {
 	result, err := d.db.Exec(`
-		INSERT INTO checkpoints (version, message, created_at)
-		VALUES (?, ?, ?)
-	`, cp.Version, nullString(cp.Message), cp.CreatedAt.Unix())
+		INSERT INTO checkpoints (version, message, created_at, duration_ms, parent_version)
+		VALUES (?, ?, ?, ?, ?)
+	`, cp.Version, nullString(cp.Message), cp.CreatedAt.Unix(), cp.DurationMs, nullInt(cp.ParentVersion))
 	if err != nil {
 		return err
 	}
@@ -156,11 +186,13 @@ func (d *DB) GetCheckpoint(version int) (*Checkpoint, error) {
 	var cp Checkpoint
 	var createdAt int64
 	var message sql.NullString
+	var durationMs sql.NullInt64
+	var parentVersion sql.NullInt64
 
 	err := d.db.QueryRow(`
-		SELECT id, version, message, created_at
+		SELECT id, version, message, created_at, duration_ms, parent_version
 		FROM checkpoints WHERE version = ?
-	`, version).Scan(&cp.ID, &cp.Version, &message, &createdAt)
+	`, version).Scan(&cp.ID, &cp.Version, &message, &createdAt, &durationMs, &parentVersion)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -171,6 +203,13 @@ func (d *DB) GetCheckpoint(version int) (*Checkpoint, error) {
 
 	cp.Message = message.String
 	cp.CreatedAt = time.Unix(createdAt, 0)
+	if durationMs.Valid {
+		cp.DurationMs = durationMs.Int64
+	}
+	if parentVersion.Valid {
+		pv := int(parentVersion.Int64)
+		cp.ParentVersion = &pv
+	}
 
 	return &cp, nil
 }
@@ -178,7 +217,7 @@ func (d *DB) GetCheckpoint(version int) (*Checkpoint, error) {
 // ListCheckpoints returns all checkpoints
 func (d *DB) ListCheckpoints(limit int) ([]*Checkpoint, error) {
 	query := `
-		SELECT id, version, message, created_at
+		SELECT id, version, message, created_at, duration_ms, parent_version
 		FROM checkpoints
 		ORDER BY version DESC
 	`
@@ -197,13 +236,22 @@ func (d *DB) ListCheckpoints(limit int) ([]*Checkpoint, error) {
 		var cp Checkpoint
 		var createdAt int64
 		var message sql.NullString
+		var durationMs sql.NullInt64
+		var parentVersion sql.NullInt64
 
-		if err := rows.Scan(&cp.ID, &cp.Version, &message, &createdAt); err != nil {
+		if err := rows.Scan(&cp.ID, &cp.Version, &message, &createdAt, &durationMs, &parentVersion); err != nil {
 			return nil, err
 		}
 
 		cp.Message = message.String
 		cp.CreatedAt = time.Unix(createdAt, 0)
+		if durationMs.Valid {
+			cp.DurationMs = durationMs.Int64
+		}
+		if parentVersion.Valid {
+			pv := int(parentVersion.Int64)
+			cp.ParentVersion = &pv
+		}
 
 		checkpoints = append(checkpoints, &cp)
 	}
@@ -236,12 +284,14 @@ func (d *DB) GetLatestCheckpoint() (*Checkpoint, error) {
 	var cp Checkpoint
 	var createdAt int64
 	var message sql.NullString
+	var durationMs sql.NullInt64
+	var parentVersion sql.NullInt64
 
 	err := d.db.QueryRow(`
-		SELECT id, version, message, created_at
+		SELECT id, version, message, created_at, duration_ms, parent_version
 		FROM checkpoints
 		ORDER BY version DESC LIMIT 1
-	`).Scan(&cp.ID, &cp.Version, &message, &createdAt)
+	`).Scan(&cp.ID, &cp.Version, &message, &createdAt, &durationMs, &parentVersion)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -252,6 +302,13 @@ func (d *DB) GetLatestCheckpoint() (*Checkpoint, error) {
 
 	cp.Message = message.String
 	cp.CreatedAt = time.Unix(createdAt, 0)
+	if durationMs.Valid {
+		cp.DurationMs = durationMs.Int64
+	}
+	if parentVersion.Valid {
+		pv := int(parentVersion.Int64)
+		cp.ParentVersion = &pv
+	}
 
 	return &cp, nil
 }
@@ -274,9 +331,16 @@ func (d *DB) SetSetting(key, value string) error {
 	return err
 }
 
-func nullString(s string) interface{} {
+func nullString(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
+}
+
+func nullInt(i *int) any {
+	if i == nil {
+		return nil
+	}
+	return *i
 }

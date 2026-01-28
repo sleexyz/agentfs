@@ -143,17 +143,19 @@ With --auto flag, the command:
 
 		if jsonFlag {
 			type createJSON struct {
-				Version    string `json:"version"`
-				Message    string `json:"message,omitempty"`
-				CreatedAt  string `json:"created_at"`
-				DurationMs int64  `json:"duration_ms"`
+				Version       string `json:"version"`
+				Message       string `json:"message,omitempty"`
+				CreatedAt     string `json:"created_at"`
+				DurationMs    int64  `json:"duration_ms"`
+				ParentVersion *int   `json:"parent_version"`
 			}
 
 			output := createJSON{
-				Version:    fmt.Sprintf("v%d", cp.Version),
-				Message:    cp.Message,
-				CreatedAt:  cp.CreatedAt.Format(time.RFC3339),
-				DurationMs: duration.Milliseconds(),
+				Version:       fmt.Sprintf("v%d", cp.Version),
+				Message:       cp.Message,
+				CreatedAt:     cp.CreatedAt.Format(time.RFC3339),
+				DurationMs:    duration.Milliseconds(),
+				ParentVersion: cp.ParentVersion,
 			}
 
 			enc := json.NewEncoder(os.Stdout)
@@ -211,17 +213,21 @@ var cpListCmd = &cobra.Command{
 
 		if jsonFlag {
 			type cpJSON struct {
-				Version   string `json:"version"`
-				Message   string `json:"message,omitempty"`
-				CreatedAt string `json:"created_at"`
+				Version       string `json:"version"`
+				Message       string `json:"message,omitempty"`
+				CreatedAt     string `json:"created_at"`
+				DurationMs    int64  `json:"duration_ms,omitempty"`
+				ParentVersion *int   `json:"parent_version"`
 			}
 
 			var output []cpJSON
 			for _, cp := range checkpoints {
 				output = append(output, cpJSON{
-					Version:   fmt.Sprintf("v%d", cp.Version),
-					Message:   cp.Message,
-					CreatedAt: cp.CreatedAt.Format(time.RFC3339),
+					Version:       fmt.Sprintf("v%d", cp.Version),
+					Message:       cp.Message,
+					CreatedAt:     cp.CreatedAt.Format(time.RFC3339),
+					DurationMs:    cp.DurationMs,
+					ParentVersion: cp.ParentVersion,
 				})
 			}
 
@@ -301,17 +307,21 @@ var cpInfoCmd = &cobra.Command{
 
 		if jsonFlag {
 			type infoJSON struct {
-				Version   string `json:"version"`
-				Store     string `json:"store"`
-				Message   string `json:"message,omitempty"`
-				CreatedAt string `json:"created_at"`
+				Version       string `json:"version"`
+				Store         string `json:"store"`
+				Message       string `json:"message,omitempty"`
+				CreatedAt     string `json:"created_at"`
+				DurationMs    int64  `json:"duration_ms,omitempty"`
+				ParentVersion *int   `json:"parent_version"`
 			}
 
 			output := infoJSON{
-				Version:   fmt.Sprintf("v%d", cp.Version),
-				Store:     s.Name,
-				Message:   cp.Message,
-				CreatedAt: cp.CreatedAt.Format(time.RFC3339),
+				Version:       fmt.Sprintf("v%d", cp.Version),
+				Store:         s.Name,
+				Message:       cp.Message,
+				CreatedAt:     cp.CreatedAt.Format(time.RFC3339),
+				DurationMs:    cp.DurationMs,
+				ParentVersion: cp.ParentVersion,
 			}
 
 			enc := json.NewEncoder(os.Stdout)
@@ -326,6 +336,12 @@ var cpInfoCmd = &cobra.Command{
 			fmt.Printf("Message:     %s\n", cp.Message)
 		}
 		fmt.Printf("Created:     %s\n", cp.CreatedAt.Format("2006-01-02 15:04:05"))
+		if cp.DurationMs > 0 {
+			fmt.Printf("Duration:    %dms\n", cp.DurationMs)
+		}
+		if cp.ParentVersion != nil {
+			fmt.Printf("Parent:      v%d\n", *cp.ParentVersion)
+		}
 	},
 }
 

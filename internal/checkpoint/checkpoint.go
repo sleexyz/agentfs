@@ -31,7 +31,8 @@ func NewManager(storeManager *store.Manager, database *db.DB, s *store.Store) *M
 
 // CreateOpts contains options for creating a checkpoint
 type CreateOpts struct {
-	Message string
+	Message       string
+	ParentVersion *int // Explicit parent version (if nil, uses latest checkpoint's version)
 }
 
 // Create creates a new checkpoint
@@ -46,6 +47,23 @@ func (m *Manager) Create(opts CreateOpts) (*db.Checkpoint, time.Duration, error)
 	// Sync filesystem buffers for the mount point
 	cmd := exec.Command("sync", "-f", m.s.MountPath)
 	cmd.Run() // Ignore errors, sync is best-effort
+
+	// Determine parent version
+	var parentVersion *int
+	if opts.ParentVersion != nil {
+		// Explicit parent version provided
+		parentVersion = opts.ParentVersion
+	} else {
+		// Default to latest checkpoint's version
+		latestCp, err := m.database.GetLatestCheckpoint()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to get latest checkpoint: %w", err)
+		}
+		if latestCp != nil {
+			parentVersion = &latestCp.Version
+		}
+		// If no latest checkpoint, parentVersion stays nil (first checkpoint)
+	}
 
 	// Get next version number
 	version, err := m.database.GetNextVersion()
@@ -74,11 +92,16 @@ func (m *Manager) Create(opts CreateOpts) (*db.Checkpoint, time.Duration, error)
 		fmt.Fprintf(os.Stderr, "warning: failed to update latest symlink: %v\n", err)
 	}
 
+	// Calculate duration before recording to database
+	duration := time.Since(start)
+
 	// Record in database
 	cp := &db.Checkpoint{
-		Version:   version,
-		Message:   opts.Message,
-		CreatedAt: time.Now(),
+		Version:       version,
+		Message:       opts.Message,
+		CreatedAt:     time.Now(),
+		DurationMs:    duration.Milliseconds(),
+		ParentVersion: parentVersion,
 	}
 	if err := m.database.CreateCheckpoint(cp); err != nil {
 		// Clean up the checkpoint directory
@@ -86,7 +109,7 @@ func (m *Manager) Create(opts CreateOpts) (*db.Checkpoint, time.Duration, error)
 		return nil, 0, fmt.Errorf("failed to record checkpoint: %w", err)
 	}
 
-	return cp, time.Since(start), nil
+	return cp, duration, nil
 }
 
 // List returns all checkpoints
@@ -139,8 +162,13 @@ func (m *Manager) Restore(version int, createPreRestore bool) (*db.Checkpoint, t
 	}
 
 	// Create pre-restore checkpoint if requested
+	// The pre-restore checkpoint's parent is the target version we're restoring to,
+	// which captures the "forked from vN" semantics
 	if createPreRestore && m.store.IsMounted(m.s.MountPath) {
-		_, _, err := m.Create(CreateOpts{Message: "pre-restore"})
+		_, _, err := m.Create(CreateOpts{
+			Message:       "pre-restore",
+			ParentVersion: &version,
+		})
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to create pre-restore checkpoint: %w", err)
 		}

@@ -1,22 +1,30 @@
 # AgentFS
 
-Seamless, instant checkpoint and restore for agentic workflows on macOS.
+Instant checkpoint and restore for agentic workflows on macOS.
 
 ```
 > brew tap sleexyz/tap
 > brew install agentfs
+```
 
+Agents
+
+```
 > agentfs manage foo
 > cd foo
 > agentfs checkpoint
 > agentfs list
 ```
 
-The core of AgentFS is exceedingly simple: directories are mounted APFS disk images. Why disk images:
+## How it works
 
-Although APFS is already Copy-On-Write, the number of operations scale with the number of files, so `cp -R` operations on directories may still be noticibly slow when containing many files in e.g. `.git` or `node_modules`.
+The core of AgentFS is exceedingly simple: directories are mounted APFS disk images.
 
-However, if we clone not the files but a disk image, this reduces the number of operations from 50k files to ~100 "bands" of [sparse bundle](https://en.wikipedia.org/wiki/Sparse_image#Sparse_bundle_disk_images), giving us extremely fast checkpoint and restore.
+Why disk image? Isn't APFS already Copy-on-Write?
+
+APFS is COW but the number of operations scale with the number of files. This means `cp -R` operations on directories may still be noticibly slow when containing many files in e.g. `.git` or `node_modules`.
+
+We can get around this by operating not on files but on a disk image of the files. This reduces the number of operations from 50k files to ~100 "bands" of [sparse bundle](https://en.wikipedia.org/wiki/Sparse_image#Sparse_bundle_disk_images), giving us extremely fast checkpoint and restore.
 
 
 ```
@@ -41,7 +49,7 @@ However, if we clone not the files but a disk image, this reduces the number of 
 └─────────────────────────────────────────────────────────┘
 ```
 
-Assuming our host filesystem is APFS as well: because APFS is COW, cloning the filesystem for checkpointing is as simple as a `cp -R` on the bands of the disk image.
+Cloning the filesystem for checkpointing is as simple as a `cp -R` on the bands of the disk image, and if this host file system is APFS this is extremely fast (via COW).
 
 See [how it works](knowledge/two-layer-apfs.md) for details.
 
