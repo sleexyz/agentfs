@@ -244,11 +244,6 @@ func runManage(dirPath string) {
 		database.Close()
 	}
 
-	// === CREATE CONTEXT FILE ===
-	if err := context.WriteContext(dirPath, storePath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to create .agentfs file: %v\n", err)
-	}
-
 	// === REGISTER ===
 	reg, err := registry.Open()
 	if err != nil {

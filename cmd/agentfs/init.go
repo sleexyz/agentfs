@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sleexyz/agentfs/internal/context"
 	"github.com/sleexyz/agentfs/internal/db"
 	"github.com/sleexyz/agentfs/internal/registry"
 	"github.com/sleexyz/agentfs/internal/store"
@@ -78,11 +77,6 @@ If no name is provided, you will be prompted for one.`,
 		if err := database.InitStore(name, s.SizeBytes); err != nil {
 			storeManager.Delete(s)
 			exitWithError(ExitError, "failed to initialize store database: %v", err)
-		}
-
-		// Create .agentfs context file in the mount point
-		if err := context.WriteContext(s.MountPath, s.StorePath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to create .agentfs file: %v\n", err)
 		}
 
 		// Register store in global registry

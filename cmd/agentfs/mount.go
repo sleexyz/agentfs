@@ -71,11 +71,6 @@ Examples:
 			exitWithError(ExitMountFailed, "%v", err)
 		}
 
-		// Write context file in mount directory
-		if err := context.WriteContext(s.MountPath, s.StorePath); err != nil {
-			fmt.Printf("warning: failed to create .agentfs file: %v\n", err)
-		}
-
 		// Update last_mounted_at in registry
 		reg, err := registry.Open()
 		if err != nil {
@@ -146,12 +141,6 @@ func mountAll() {
 		}
 		fmt.Println("done")
 		mounted++
-
-		// Write context file in mount directory
-		if err := context.WriteContext(s.MountPath, s.StorePath); err != nil {
-			// Non-fatal warning
-			fmt.Fprintf(os.Stderr, "warning: failed to create .agentfs file for %s: %v\n", s.Name, err)
-		}
 
 		// Update last_mounted_at
 		reg.UpdateLastMounted(s.StorePath)
