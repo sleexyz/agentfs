@@ -2,7 +2,31 @@
 
 Instant checkpoint and restore for agentic workflows on macOS.
 
-AgentFS uses sparse bundles and APFS reflinks to create near-instant snapshots of your project state. Checkpoint in ~20ms, restore in ~500ms — regardless of project size.
+AgentFS uses a two-layer APFS architecture to checkpoint entire projects in ~20ms and restore in ~500ms — regardless of project size.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Layer 1: Host APFS                                     │
+│                                                         │
+│  myproject.fs/                                          │
+│  ├── data.sparsebundle/bands/   ← ~100 bands (8MB each) │
+│  └── checkpoints/                                       │
+│      ├── v1/                    ← COW clone of bands    │
+│      └── v2/                    ← COW clone of bands    │
+└───────────────────────────┬─────────────────────────────┘
+                            │ mount
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│  Layer 2: Inner APFS (where you work)                   │
+│                                                         │
+│  myproject/                                             │
+│  ├── src/                                               │
+│  ├── node_modules/          ← 36k files                 │
+│  └── .git/                                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+Checkpoints clone ~100 bands instead of 36k files. APFS handles deduplication automatically — no garbage collection needed. See [how it works](knowledge/two-layer-apfs.md) for details.
 
 ## Features
 
@@ -100,11 +124,9 @@ agentfs service status        Show service status
 
 ## How It Works
 
-1. **Sparse bundles** — Your project lives inside a macOS sparse bundle (a directory that acts like a disk image). The sparse bundle stores data in 8MB "bands".
+Your project lives in a mounted sparse bundle. Checkpoints clone the sparse bundle's bands (not individual files) using APFS copy-on-write. This makes checkpoints O(bands) instead of O(files).
 
-2. **APFS reflinks** — Checkpoints use `cp -c` (clone) which creates copy-on-write references. The checkpoint is instant because no data is actually copied.
-
-3. **Band-level snapshots** — A 36k file project compresses to ~100 bands. Cloning 100 bands is much faster than cloning 36k files.
+See [knowledge/two-layer-apfs.md](knowledge/two-layer-apfs.md) for the full architecture.
 
 ## Context System
 
