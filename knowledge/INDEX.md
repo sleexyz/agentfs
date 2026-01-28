@@ -20,3 +20,9 @@ Index of research documents and spike findings.
 **Tags:** syncthing, mutagen, unison, sync, distributed, conflict-resolution
 **Summary:** Deep comparison of file sync tools (Syncthing, Mutagen, Unison) including architecture, conflict handling, and ecosystem size. Syncthing chosen for AgentFS.
 
+---
+
+## agentfs-vs-claude-snap.md
+**Tags:** benchmark, comparison, claude-snap, sparse-bundle, apfs-clone, performance
+**Summary:** Head-to-head benchmark comparing agentfs (sparse bundle + band clones) vs claude-snap (direct file clones). agentfs is 23x faster for checkpoints and 7x faster for restores on a 13k file project due to band compression (13,567 files → 124 bands).
+
