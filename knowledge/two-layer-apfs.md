@@ -10,6 +10,19 @@ AgentFS uses a two-layer APFS architecture that enables instant checkpoints with
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 2: INNER APFS (mounted sparse bundle volume)                         │
+│                                                                             │
+│  ~/projects/myapp/           ← Mount point, where you work                  │
+│  ├── src/app.ts              ← Actual project files                        │
+│  ├── node_modules/           ← 13k files                                   │
+│  ├── package.json                                                          │
+│  └── .git/                                                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ▲
+                                    │ hdiutil attach
+                                    │
+┌─────────────────────────────────────────────────────────────────────────────┐
 │  LAYER 1: HOST APFS (your Mac's filesystem)                                 │
 │                                                                             │
 │  ~/.agentfs/stores/myapp/                                                   │
@@ -23,19 +36,6 @@ AgentFS uses a two-layer APFS architecture that enables instant checkpoints with
 │      ├── v1/                 ← APFS clone of bands/ (HOST-level COW)       │
 │      ├── v2/                 ← Another clone                               │
 │      └── v3/                 ← ...                                         │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    │ hdiutil attach
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  LAYER 2: INNER APFS (mounted sparse bundle volume)                         │
-│                                                                             │
-│  ~/projects/myapp/           ← Mount point, where you work                  │
-│  ├── src/app.ts              ← Actual project files                        │
-│  ├── node_modules/           ← 13k files                                   │
-│  ├── package.json                                                          │
-│  └── .git/                                                                  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
