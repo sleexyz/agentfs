@@ -218,6 +218,11 @@ func countFilesExcluding(dir, exclude string) (int, int64) {
 		if filepath.Base(path) == exclude {
 			return nil
 		}
+		// Skip macOS system files (same as countFilesAndSize in manage.go)
+		rel, _ := filepath.Rel(dir, path)
+		if isSystemFile(rel) {
+			return nil
+		}
 		count++
 		size += info.Size()
 		return nil

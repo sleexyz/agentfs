@@ -6,11 +6,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Build agentfs if needed
-AGENTFS="$PROJECT_DIR/agentfs"
+# Use the dev binary built by justfile
+AGENTFS="$PROJECT_DIR/agentfs-dev"
 if [ ! -f "$AGENTFS" ]; then
-    echo "Building agentfs..."
-    (cd "$PROJECT_DIR" && go build -o agentfs ./cmd/agentfs)
+    echo "Error: agentfs-dev not found. Run 'just build' first."
+    exit 1
 fi
 
 TEST_DIR="/tmp/agentfs-e2e-$$"
@@ -34,9 +34,12 @@ teardown() {
 
     # Unmount any mounted stores in test directory
     if [ -d "$TEST_DIR" ]; then
-        for mount in "$TEST_DIR"/*/; do
-            if [ -f "${mount}.agentfs" ] 2>/dev/null; then
-                hdiutil detach "$mount" 2>/dev/null || true
+        for store in "$TEST_DIR"/*.fs; do
+            if [ -d "$store" ]; then
+                mount="${store%.fs}"
+                if [ -d "$mount" ]; then
+                    hdiutil detach "$mount" 2>/dev/null || true
+                fi
             fi
         done
     fi
@@ -85,8 +88,9 @@ test_basic_manage() {
     [ -d myapp.fs/data.sparsebundle ] || fail "sparse bundle not created"
     [ -d myapp.fs/checkpoints ] || fail "checkpoints directory not created"
 
-    # Verify mounted
-    [ -f myapp/.agentfs ] || fail "not mounted (.agentfs missing)"
+    # Verify mounted (check that it's a mount point via device ID)
+    [ -d myapp ] || fail "mount point missing"
+    $AGENTFS checkpoint list --store myapp >/dev/null || fail "not mounted (checkpoint list failed)"
 
     # Verify files preserved
     [ -f myapp/file.txt ] || fail "file.txt missing"
@@ -235,8 +239,8 @@ test_unmanage() {
     # Verify store deleted
     [ ! -d unmanageapp.fs ] || fail "store not deleted"
 
-    # Verify not mounted anymore
-    [ ! -f unmanageapp/.agentfs ] || fail "still has .agentfs"
+    # Verify not mounted anymore (it's now a regular directory)
+    [ -d unmanageapp ] || fail "directory missing after unmanage"
 
     # Verify files restored
     [ -f unmanageapp/keep.txt ] || fail "keep.txt not restored"
@@ -286,6 +290,37 @@ test_manage_nonexistent() {
 }
 
 # ============================================================
+# TEST: Mount Detection (checkpoint from nested dir)
+# ============================================================
+test_mount_detection() {
+    echo ""
+    echo "=== Test: Mount Detection ==="
+
+    # Setup - create and manage a directory
+    mkdir -p detectapp
+    echo "root file" > detectapp/root.txt
+    $AGENTFS manage detectapp
+
+    # Verify no .agentfs file (we removed that)
+    [ ! -f detectapp/.agentfs ] || fail ".agentfs should not exist"
+
+    # Create nested directory structure
+    mkdir -p detectapp/deep/nested/dir
+    echo "nested file" > detectapp/deep/nested/dir/file.txt
+
+    # Run checkpoint from nested directory (mount detection should find store)
+    cd detectapp/deep/nested/dir
+    $AGENTFS checkpoint create "from nested" || fail "checkpoint failed from nested dir"
+    cd "$TEST_DIR"
+
+    # Verify checkpoint was created
+    checkpoint_count=$($AGENTFS checkpoint list --store detectapp 2>/dev/null | grep -c "^v" || echo "0")
+    [ "$checkpoint_count" -ge 1 ] || fail "checkpoint not created"
+
+    pass
+}
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -319,6 +354,9 @@ test_unmanage_symlinks
 teardown; setup
 
 test_manage_nonexistent
+teardown; setup
+
+test_mount_detection
 
 echo ""
 echo "============================================"
