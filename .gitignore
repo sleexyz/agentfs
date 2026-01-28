@@ -25,4 +25,5 @@ result
 
 # macOS
 .DS_Store
+.fseventsd
 vendor/
