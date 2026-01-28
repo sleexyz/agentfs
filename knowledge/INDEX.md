@@ -32,3 +32,9 @@ Index of research documents and spike findings.
 **Tags:** content-addressing, sha256, file-hashing, fsevents, incremental, benchmark, sqlite
 **Summary:** Spike validating content-addressed file tracking for Phase 2. Confirms <200ms target achievable for 10k files with 4-worker parallel hashing and mtime-based incremental detection. FSEvents works with sparse bundle mounts.
 
+---
+
+## two-layer-apfs.md
+**Tags:** architecture, apfs, cow, sparse-bundle, bands, garbage-collection, checkpoint
+**Summary:** Explains the two-layer APFS architecture (host APFS + inner APFS inside sparse bundle). Documents how this enables instant checkpoints via band-level COW cloning and eliminates the need for garbage collection by delegating reference counting to APFS.
+
