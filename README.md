@@ -12,8 +12,16 @@ To make any directory checkpointable:
 ```
 > agentfs manage foo
 > cd foo
+
 > agentfs checkpoint create
+Created v18 (83ms)
+
 > agentfs list
+VERSION  MESSAGE                                   CREATED
+v18                                                32 seconds ago
+v17      Bash `sudo darwin-rebuild switch ...`...  53 seconds ago
+v16      Edit justfile (f55a4d56)                  1 minute ago
+...
 ```
 
 ## How it works
