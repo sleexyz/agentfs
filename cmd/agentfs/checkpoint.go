@@ -22,32 +22,74 @@ var checkpointCmd = &cobra.Command{
 	Long:  `Create, list, and manage checkpoints.`,
 }
 
+var cpAutoFlag bool
+
 var cpCreateCmd = &cobra.Command{
 	Use:   "create [message]",
 	Short: "Create a new checkpoint",
 	Long: `Create a new checkpoint of the current state.
 
-Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle bands.`,
+Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle bands.
+
+With --auto flag, the command:
+  - Detects store from current directory (via .agentfs file)
+  - Skips silently if not in an agentfs directory
+  - Skips silently if store is not mounted
+  - Skips silently if no changes since last checkpoint
+  - Uses "auto" as the message if none provided`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Resolve store
-		storePath, err := context.MustResolveStore(storeFlag, "")
-		if err != nil {
-			exitWithError(ExitUsageError, "%v", err)
+		var storePath string
+		var err error
+
+		if cpAutoFlag {
+			// Auto mode: detect store from cwd
+			storePath, err = context.FindStoreFromCwd()
+			if err != nil {
+				// Error reading context - exit silently in auto mode
+				os.Exit(0)
+			}
+			if storePath == "" {
+				// Not in agentfs directory - silent exit
+				os.Exit(0)
+			}
+		} else {
+			// Normal mode: resolve store
+			storePath, err = context.MustResolveStore(storeFlag, "")
+			if err != nil {
+				exitWithError(ExitUsageError, "%v", err)
+			}
 		}
 
 		// Get store info
 		s, err := storeManager.GetFromPath(storePath)
 		if err != nil {
+			if cpAutoFlag {
+				os.Exit(0) // Silent exit in auto mode
+			}
 			exitWithError(ExitError, "%v", err)
 		}
 		if s == nil {
+			if cpAutoFlag {
+				os.Exit(0) // Silent exit in auto mode
+			}
 			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Check if mounted
+		if !storeManager.IsMounted(s.MountPath) {
+			if cpAutoFlag {
+				os.Exit(0) // Silent exit in auto mode
+			}
+			exitWithError(ExitError, "store '%s' is not mounted", s.Name)
 		}
 
 		// Open per-store database
 		database, err := db.OpenFromStorePath(storePath)
 		if err != nil {
+			if cpAutoFlag {
+				os.Exit(1) // Error exit in auto mode (store exists but can't open)
+			}
 			exitWithError(ExitError, "failed to open database: %v", err)
 		}
 		defer database.Close()
@@ -55,16 +97,37 @@ Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle band
 		// Create checkpoint manager
 		cpManager := cpkg.NewManager(storeManager, database, s)
 
+		// In auto mode, check for changes
+		if cpAutoFlag {
+			hasChanges, err := cpManager.HasChanges()
+			if err != nil {
+				os.Exit(1) // Error exit
+			}
+			if !hasChanges {
+				os.Exit(0) // No changes - silent exit
+			}
+		}
+
 		var message string
 		if len(args) > 0 {
 			message = args[0]
+		} else if cpAutoFlag {
+			message = "auto"
 		}
 
 		cp, duration, err := cpManager.Create(cpkg.CreateOpts{
 			Message: message,
 		})
 		if err != nil {
+			if cpAutoFlag {
+				os.Exit(1) // Error exit in auto mode
+			}
 			exitWithError(ExitError, "%v", err)
+		}
+
+		// In auto mode, silent success
+		if cpAutoFlag {
+			os.Exit(0)
 		}
 
 		if jsonFlag {
@@ -315,6 +378,7 @@ Requires confirmation unless -f/--force is specified.`,
 }
 
 func init() {
+	cpCreateCmd.Flags().BoolVar(&cpAutoFlag, "auto", false, "auto-checkpoint mode (quiet, skip-if-unchanged)")
 	cpListCmd.Flags().IntVar(&cpListLimit, "limit", 0, "limit number of results")
 
 	checkpointCmd.AddCommand(cpCreateCmd)

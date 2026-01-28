@@ -146,3 +146,28 @@ func MustResolveStore(storeFlag, startDir string) (string, error) {
 func StoreNameFromPath(storePath string) string {
 	return strings.TrimSuffix(filepath.Base(storePath), ".fs")
 }
+
+// FindStoreFromCwd finds a store by walking up from cwd looking for .agentfs file
+// Returns storePath if found, empty string if not in an agentfs directory
+// This is for use with --auto flag where "not found" is not an error
+func FindStoreFromCwd() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	ctx, err := FindContext(cwd)
+	if err != nil {
+		return "", err
+	}
+	if ctx == nil {
+		return "", nil // Not in agentfs directory
+	}
+
+	// Verify the store still exists
+	if _, err := os.Stat(ctx.StorePath); os.IsNotExist(err) {
+		return "", nil // Store doesn't exist anymore
+	}
+
+	return ctx.StorePath, nil
+}

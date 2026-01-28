@@ -323,3 +323,67 @@ func CountLines(fromFile, toFile string) (added, deleted int) {
 	}
 	return
 }
+
+// HasChanges checks if there are changes since the last checkpoint
+// by comparing band files (names + sizes) between current bands and last checkpoint
+func (m *Manager) HasChanges() (bool, error) {
+	// Get the latest checkpoint
+	latestCp, err := m.database.GetLatestCheckpoint()
+	if err != nil {
+		return false, err
+	}
+	if latestCp == nil {
+		// No previous checkpoint = always has changes
+		return true, nil
+	}
+
+	// Get paths
+	currentBands := m.store.GetBandsPath(m.s)
+	checkpointsPath := m.store.GetCheckpointsPath(m.s)
+	lastBands := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", latestCp.Version))
+
+	// Compare directories by listing files with sizes
+	return !dirsEqual(currentBands, lastBands), nil
+}
+
+// listDirWithSizes returns a map of filename -> size for all files in a directory
+func listDirWithSizes(dir string) (map[string]int64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]int64)
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		result[entry.Name()] = info.Size()
+	}
+	return result, nil
+}
+
+// dirsEqual compares two directories by file names and sizes
+func dirsEqual(dir1, dir2 string) bool {
+	entries1, err := listDirWithSizes(dir1)
+	if err != nil {
+		return false
+	}
+
+	entries2, err := listDirWithSizes(dir2)
+	if err != nil {
+		return false
+	}
+
+	if len(entries1) != len(entries2) {
+		return false
+	}
+
+	for name, size1 := range entries1 {
+		if size2, ok := entries2[name]; !ok || size1 != size2 {
+			return false
+		}
+	}
+	return true
+}
