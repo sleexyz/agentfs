@@ -171,14 +171,6 @@ Yes. The sparse bundle, checkpoints, and metadata are just files on disk. Howeve
 
 Your original directory is safely backed up to `~/.agentfs/backups/` before any changes. The backup persists until you explicitly run `agentfs manage --cleanup` after verifying the conversion worked.
 
-### Should I exclude stores from Time Machine?
-
-Yes. AgentFS checkpoints are your version history — backing them up with Time Machine is redundant and can cause significant storage bloat (Time Machine would back up every band version). Exclude stores with:
-
-```bash
-tmutil addexclusion -p myproject.fs/
-```
-
 ### Why sparse bundles instead of direct file cloning?
 
 Speed. A 36k file project compresses to ~100-150 bands. Cloning 150 bands with APFS reflinks takes ~20ms. Cloning 36k files directly would take ~1700ms. The sparse bundle acts as an aggregation layer that makes checkpoint operations O(bands) instead of O(files).
