@@ -1,1 +1,20 @@
+# Go
 .go/
+agentfs
+
+# Polo session files
+ralph-*.log
+progress-*.txt
+PROMPT-*.md
+GOALS.md
+LEARNINGS.md
+BRAINSTORM.md
+
+# Research downloads
+downloads/
+
+# Nix
+result
+
+# macOS
+.DS_Store
