@@ -1,6 +1,12 @@
 # Go
 .go/
 /agentfs
+/cpbench
+/fswatch
+/hashbench
+
+# Test stores
+*.fs/
 
 # Polo session files
 ralph-*.log
@@ -14,5 +20,9 @@ downloads/
 # Nix
 result
 
+# Archived files
+*.archived
+
 # macOS
 .DS_Store
+vendor/

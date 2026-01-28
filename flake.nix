@@ -15,7 +15,7 @@
           pname = "agentfs";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-7D7QAAosUhyqdIJovpE2bJTr92ApEY1YGCfOiBW8/z4=";
+          vendorHash = "sha256-B4TXleaLun8cHqYj7iXeJPgapB5hoyZpT7+jz+shHk4=";
           subPackages = [ "cmd/agentfs" ];
         };
       in
