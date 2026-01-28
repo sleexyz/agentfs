@@ -49,6 +49,9 @@ See `knowledge/agentfs-vs-claude-snap.md` for benchmarks against alternative app
 - [ ] CLI: blame, timeline commands
 
 ### Phase 3: Polish
+- [x] Global registry (`~/.agentfs/registry.db`)
+- [x] Auto-remount on login (LaunchAgent service)
+- [x] `mount --all` / `unmount --all`
 - [ ] `brew install agentfs`
 - [ ] Shell completions
 - [ ] Better error messages
