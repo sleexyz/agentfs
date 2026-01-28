@@ -1,84 +1,67 @@
 # AgentFS Goals
 
-> A filesystem layer that makes checkpointing instant, invisible, and analyzable.
+> Instant checkpoint and restore for macOS projects.
 
 ---
 
 ## North Star
 
-**Make version control disappear for agent workflows.**
+**Make version control invisible for agent workflows.**
 
-Agents should be able to checkpoint, restore, and analyze changes without the user configuring anything or waiting for anything.
-
----
-
-## Success Criteria
-
-1. **Instant checkpoints** — <100ms for typical projects (10k files)
-2. **Zero configuration** — Single `brew install` or DMG, no security dialogs
-3. **Rich metadata** — Know *why* things changed, not just *what*
-4. **Object store sync** — Durable, COW, content-addressed
-5. **Seamless UX** — User works in normal directory, magic happens underneath
+Agents checkpoint before risky operations, restore when things go wrong — without the user waiting or configuring anything.
 
 ---
 
-## Current Phase: Ready to Build
+## Status: Phase 1 Complete
 
-Research and design complete. Architecture validated.
+### What's Working
 
-**Completed:**
-- ✅ Sparse bundle internals (Spike 1)
-- ✅ Checkpoint performance ~20ms (Spike 2)
-- ✅ APFS reflinks for instant snapshots
-- ✅ Sync tool comparison → Syncthing
-- ✅ Architecture decision → file-level sync (not band-level)
-- ✅ Spec written → `specs/agentfs-daemon.md`
+- **Checkpoint:** ~60-80ms for any project size (13k+ files tested)
+- **Restore:** ~500-1000ms (limited by hdiutil mount/unmount)
+- **CLI:** init, open, close, delete, list, use, status, checkpoint, restore, diff
+- **Real projects:** Works with node_modules, .git, etc.
 
-### Architecture Summary
+### Key Insight
+
+Sparse bundles collapse thousands of files into ~100 bands. APFS reflinks on bands = O(bands) instead of O(files).
 
 ```
-Sparse bundles    → Checkpoint optimization (36k files → 100 bands)
-APFS reflinks     → Instant snapshots (~20ms for any project)
-Syncthing         → File-level sync (handles conflicts gracefully)
+13,567 files → 124 bands → checkpoint in 70ms
 ```
 
-**Key insight:** Band-level sync would corrupt sparse bundles on conflict. File-level sync is safe.
-
-### Research Completed
-
-- [x] Sparse bundle internals → bands collapse files, enabling fast checkpoints
-- [x] Checkpoint speed → ~20ms via APFS reflinks on bands
-- [x] macOS constraints → no FUSE needed, sparse bundles are native
-- [x] Sync architecture → file-level via Syncthing (not band-level)
+See `knowledge/agentfs-vs-claude-snap.md` for benchmarks against alternative approaches.
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Core MVP ← CURRENT
-- Instant checkpoint (~20ms) and restore (<500ms)
-- CLI: init, open, close, checkpoint, restore, log, diff
-- Works with real projects (node_modules, .git)
+### Phase 1: Core MVP ✅ COMPLETE
+- [x] Sparse bundle store management
+- [x] Instant checkpoint via band cloning
+- [x] Fast restore via band swap
+- [x] Context system (.agentfs file)
+- [x] SQLite metadata
+- [x] CLI with all core commands
 
-### Phase 2: Causality & Analysis
-- Track agent/action/session per checkpoint
-- CLI: blame, timeline, search
-- Claude Code hook integration
+### Phase 2: Causality & Hooks (Next)
+- [ ] Track agent/action/session per checkpoint
+- [ ] Claude Code hook integration
+- [ ] CLI: blame, timeline commands
 
 ### Phase 3: Polish
-- `brew install agentfs`
-- Documentation
-- Error recovery
+- [ ] `brew install agentfs`
+- [ ] Shell completions
+- [ ] Better error messages
 
 ### Phase N+1: Remote Sync (Future)
-- Syncthing integration (file-level)
-- Multi-machine support
+- [ ] Syncthing integration (file-level)
+- [ ] Multi-machine support
 
 ---
 
-## Out of Scope (For Now)
+## Out of Scope
 
-- Remote sync (deferred to Phase N+1)
-- Windows/Linux support
+- Windows/Linux (macOS-only: APFS + sparse bundles)
 - GUI application
-- Daemon mode (CLI-first for MVP)
+- Daemon mode (CLI-first)
+- Remote sync (deferred)

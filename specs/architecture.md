@@ -1,12 +1,13 @@
-# AgentFS Daemon Specification
+# AgentFS Architecture
 
-> Version 0.2 — Revised architecture with file-level sync
+> Vision document — includes future phases (causality, sync) not yet implemented.
+> For current CLI reference, see `specs/cli.md`.
 
 ---
 
 ## Overview
 
-AgentFS is a daemon that provides:
+AgentFS is a CLI tool (daemon planned for future) that provides:
 1. **Instant checkpointing** via sparse bundles + APFS reflinks (~20ms for any project size)
 2. **Instant restore** — rollback to any checkpoint in <500ms
 3. **Causality tracking** — know *why* files changed, not just *what*
