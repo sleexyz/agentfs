@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -12,27 +13,26 @@ var deleteCmd = &cobra.Command{
 	Long: `Delete a store and all its checkpoints.
 
 This will unmount the store (if mounted), delete all checkpoint data,
-and remove the sparse bundle.
+and remove the foo.fs/ directory completely.
 
 Requires confirmation unless -f/--force is specified.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 
+		// Look for the store
 		s, err := storeManager.Get(name)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
 		if s == nil {
-			exitWithError(ExitStoreNotFound, "store '%s' not found", name)
+			exitWithError(ExitStoreNotFound, "store '%s' not found (looked for %s.fs/)", name, name)
 		}
 
-		// Get checkpoint count for confirmation message
-		count, _ := cpManager.Count(name)
-
-		prompt := fmt.Sprintf("Delete store '%s'", name)
-		if count > 0 {
-			prompt = fmt.Sprintf("Delete store '%s' and all %d checkpoints?", name, count)
+		// Confirmation prompt
+		prompt := fmt.Sprintf("Delete %s.fs", name)
+		if s.Checkpoints > 0 {
+			prompt = fmt.Sprintf("Delete %s.fs and all %d checkpoints?", name, s.Checkpoints)
 		} else {
 			prompt += "?"
 		}
@@ -42,11 +42,16 @@ Requires confirmation unless -f/--force is specified.`,
 			return
 		}
 
-		if err := storeManager.Delete(name); err != nil {
+		// Show progress
+		if storeManager.IsMounted(s.MountPath) {
+			fmt.Println("Unmounting...")
+		}
+
+		if err := storeManager.Delete(s); err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
 
-		fmt.Printf("Deleted '%s'\n", name)
+		fmt.Printf("Deleted %s/\n", filepath.Base(s.StorePath))
 	},
 }
 

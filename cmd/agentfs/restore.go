@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	cpkg "github.com/agentfs/agentfs/internal/checkpoint"
 	"github.com/agentfs/agentfs/internal/context"
+	"github.com/agentfs/agentfs/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -23,10 +25,30 @@ This will:
 Requires confirmation unless -f/--force is specified.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
 		}
+
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Open per-store database
+		database, err := db.OpenFromStorePath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "failed to open database: %v", err)
+		}
+		defer database.Close()
+
+		// Create checkpoint manager
+		cpManager := cpkg.NewManager(storeManager, database, s)
 
 		version, err := parseVersion(args[0])
 		if err != nil {
@@ -34,7 +56,7 @@ Requires confirmation unless -f/--force is specified.`,
 		}
 
 		// Get the target checkpoint first
-		targetCp, err := cpManager.Get(name, version)
+		targetCp, err := cpManager.Get(version)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
@@ -44,7 +66,7 @@ Requires confirmation unless -f/--force is specified.`,
 
 		// Get next version for pre-restore checkpoint
 		nextVersion := version + 1
-		if latest, _ := cpManager.GetLatest(name); latest != nil {
+		if latest, _ := cpManager.GetLatest(); latest != nil {
 			nextVersion = latest.Version + 1
 		}
 
@@ -59,9 +81,14 @@ Requires confirmation unless -f/--force is specified.`,
 		fmt.Printf("Restoring from v%d...\n", version)
 		fmt.Println("Mounting...")
 
-		cp, duration, err := cpManager.Restore(name, version, true)
+		cp, duration, err := cpManager.Restore(version, true)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
+		}
+
+		// Rewrite context file after restore (mount path may have been recreated)
+		if err := context.WriteContext(s.MountPath, s.StorePath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to update .agentfs file: %v\n", err)
 		}
 
 		if jsonFlag {

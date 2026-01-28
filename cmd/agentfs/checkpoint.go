@@ -11,6 +11,7 @@ import (
 
 	cpkg "github.com/agentfs/agentfs/internal/checkpoint"
 	"github.com/agentfs/agentfs/internal/context"
+	"github.com/agentfs/agentfs/internal/db"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
@@ -29,19 +30,37 @@ var cpCreateCmd = &cobra.Command{
 Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle bands.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
 		}
+
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Open per-store database
+		database, err := db.OpenFromStorePath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "failed to open database: %v", err)
+		}
+		defer database.Close()
+
+		// Create checkpoint manager
+		cpManager := cpkg.NewManager(storeManager, database, s)
 
 		var message string
 		if len(args) > 0 {
 			message = args[0]
 		}
 
-		fmt.Println("Creating checkpoint...")
-
-		cp, duration, err := cpManager.Create(name, cpkg.CreateOpts{
+		cp, duration, err := cpManager.Create(cpkg.CreateOpts{
 			Message: message,
 		})
 		if err != nil {
@@ -50,10 +69,10 @@ Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle band
 
 		if jsonFlag {
 			type createJSON struct {
-				Version   string `json:"version"`
-				Message   string `json:"message,omitempty"`
-				CreatedAt string `json:"created_at"`
-				DurationMs int64 `json:"duration_ms"`
+				Version    string `json:"version"`
+				Message    string `json:"message,omitempty"`
+				CreatedAt  string `json:"created_at"`
+				DurationMs int64  `json:"duration_ms"`
 			}
 
 			output := createJSON{
@@ -86,12 +105,32 @@ var cpListCmd = &cobra.Command{
 	Long:  `List all checkpoints for the current store.`,
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
 		}
 
-		checkpoints, err := cpManager.List(name, cpListLimit)
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Open per-store database
+		database, err := db.OpenFromStorePath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "failed to open database: %v", err)
+		}
+		defer database.Close()
+
+		// Create checkpoint manager
+		cpManager := cpkg.NewManager(storeManager, database, s)
+
+		checkpoints, err := cpManager.List(cpListLimit)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
@@ -148,17 +187,37 @@ var cpInfoCmd = &cobra.Command{
 	Long:  `Show detailed information about a specific checkpoint.`,
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
 		}
+
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Open per-store database
+		database, err := db.OpenFromStorePath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "failed to open database: %v", err)
+		}
+		defer database.Close()
+
+		// Create checkpoint manager
+		cpManager := cpkg.NewManager(storeManager, database, s)
 
 		version, err := parseVersion(args[0])
 		if err != nil {
 			exitWithError(ExitUsageError, "invalid version: %v", err)
 		}
 
-		cp, err := cpManager.Get(name, version)
+		cp, err := cpManager.Get(version)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
@@ -176,7 +235,7 @@ var cpInfoCmd = &cobra.Command{
 
 			output := infoJSON{
 				Version:   fmt.Sprintf("v%d", cp.Version),
-				Store:     name,
+				Store:     s.Name,
 				Message:   cp.Message,
 				CreatedAt: cp.CreatedAt.Format(time.RFC3339),
 			}
@@ -188,7 +247,7 @@ var cpInfoCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Checkpoint:  v%d\n", cp.Version)
-		fmt.Printf("Store:       %s\n", name)
+		fmt.Printf("Store:       %s\n", s.Name)
 		if cp.Message != "" {
 			fmt.Printf("Message:     %s\n", cp.Message)
 		}
@@ -204,17 +263,37 @@ var cpDeleteCmd = &cobra.Command{
 Requires confirmation unless -f/--force is specified.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
 		}
+
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
+		}
+
+		// Open per-store database
+		database, err := db.OpenFromStorePath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "failed to open database: %v", err)
+		}
+		defer database.Close()
+
+		// Create checkpoint manager
+		cpManager := cpkg.NewManager(storeManager, database, s)
 
 		version, err := parseVersion(args[0])
 		if err != nil {
 			exitWithError(ExitUsageError, "invalid version: %v", err)
 		}
 
-		cp, err := cpManager.Get(name, version)
+		cp, err := cpManager.Get(version)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
@@ -227,7 +306,7 @@ Requires confirmation unless -f/--force is specified.`,
 			return
 		}
 
-		if err := cpManager.Delete(name, version); err != nil {
+		if err := cpManager.Delete(version); err != nil {
 			exitWithError(ExitError, "%v", err)
 		}
 

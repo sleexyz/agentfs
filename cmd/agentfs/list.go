@@ -12,9 +12,11 @@ import (
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all stores",
-	Long:  `List all sparse bundle stores.`,
-	Args:  cobra.NoArgs,
+	Short: "List stores in current directory",
+	Long: `List all stores (*.fs/ directories) in the current directory.
+
+Shows store name, size, mount status, and checkpoint count.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		stores, err := storeManager.List()
 		if err != nil {
@@ -28,19 +30,20 @@ var listCmd = &cobra.Command{
 				SizeBytes   int64  `json:"size_bytes"`
 				Mounted     bool   `json:"mounted"`
 				MountPath   string `json:"mount_path"`
+				StorePath   string `json:"store_path"`
 				Checkpoints int    `json:"checkpoints"`
 			}
 
 			var output []storeJSON
 			for _, s := range stores {
-				count, _ := cpManager.Count(s.Name)
 				output = append(output, storeJSON{
 					Name:        s.Name,
 					Size:        humanize.IBytes(uint64(s.SizeBytes)),
 					SizeBytes:   s.SizeBytes,
 					Mounted:     s.MountedAt != nil,
 					MountPath:   s.MountPath,
-					Checkpoints: count,
+					StorePath:   s.StorePath,
+					Checkpoints: s.Checkpoints,
 				})
 			}
 
@@ -56,7 +59,7 @@ var listCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSIZE\tMOUNTED\tCHECKPOINTS")
+		fmt.Fprintln(w, "STORE\tSIZE\tMOUNTED\tCHECKPOINTS")
 
 		for _, s := range stores {
 			mounted := "No"
@@ -64,13 +67,11 @@ var listCmd = &cobra.Command{
 				mounted = "Yes"
 			}
 
-			count, _ := cpManager.Count(s.Name)
-
 			fmt.Fprintf(w, "%s\t%s\t%s\t%d\n",
-				s.Name,
+				s.Name+".fs",
 				humanize.IBytes(uint64(s.SizeBytes)),
 				mounted,
-				count,
+				s.Checkpoints,
 			)
 		}
 		w.Flush()

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agentfs/agentfs/internal/db"
 	"github.com/agentfs/agentfs/internal/store"
 )
 
@@ -38,13 +37,13 @@ func (c ChangeType) String() string {
 
 // FileInfo holds metadata about a file
 type FileInfo struct {
-	Path    string
-	Size    int64
-	Mtime   time.Time
-	Mode    fs.FileMode
-	IsDir   bool
-	IsLink  bool
-	Target  string // symlink target if IsLink
+	Path   string
+	Size   int64
+	Mtime  time.Time
+	Mode   fs.FileMode
+	IsDir  bool
+	IsLink bool
+	Target string // symlink target if IsLink
 }
 
 // Change represents a single file change
@@ -57,8 +56,8 @@ type Change struct {
 
 // Result holds the diff comparison result
 type Result struct {
-	Base    string   // e.g., "v3"
-	Target  string   // e.g., "current" or "v5"
+	Base    string // e.g., "v3"
+	Target  string // e.g., "current" or "v5"
 	Changes []Change
 }
 
@@ -80,15 +79,15 @@ func (r *Result) Summary() (added, modified, deleted int) {
 // Differ handles diff operations between checkpoints
 type Differ struct {
 	store        *store.Manager
-	database     *db.DB
+	storeObj     *store.Store
 	mountedPaths []string // track mounted paths for cleanup
 }
 
-// NewDiffer creates a new Differ
-func NewDiffer(storeManager *store.Manager, database *db.DB) *Differ {
+// NewDiffer creates a new Differ for a specific store
+func NewDiffer(storeManager *store.Manager, s *store.Store) *Differ {
 	return &Differ{
 		store:    storeManager,
-		database: database,
+		storeObj: s,
 	}
 }
 
@@ -120,16 +119,7 @@ func shouldIgnore(path string) bool {
 
 // Diff compares two versions (v1 vs v2, or v1 vs current)
 // If toVersion is 0, compares against current (live CWD)
-func (d *Differ) Diff(storeName string, fromVersion, toVersion int) (*Result, error) {
-	// Get store info
-	s, err := d.store.Get(storeName)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("store '%s' not found", storeName)
-	}
-
+func (d *Differ) Diff(fromVersion, toVersion int) (*Result, error) {
 	result := &Result{}
 
 	// Determine paths and labels
@@ -137,7 +127,8 @@ func (d *Differ) Diff(storeName string, fromVersion, toVersion int) (*Result, er
 	var fromCleanup, toCleanup func() error
 
 	// Mount fromVersion checkpoint
-	fromPath, fromCleanup, err = d.mountCheckpoint(s, fromVersion)
+	var err error
+	fromPath, fromCleanup, err = d.mountCheckpoint(fromVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mount v%d: %w", fromVersion, err)
 	}
@@ -149,13 +140,13 @@ func (d *Differ) Diff(storeName string, fromVersion, toVersion int) (*Result, er
 	// Get toPath (either mount checkpoint or use live CWD)
 	if toVersion == 0 {
 		// Compare against current (live mount)
-		if !d.store.IsMounted(s.MountPath) {
+		if !d.store.IsMounted(d.storeObj.MountPath) {
 			return nil, fmt.Errorf("store must be mounted to diff against current state")
 		}
-		toPath = s.MountPath
+		toPath = d.storeObj.MountPath
 		result.Target = "current"
 	} else {
-		toPath, toCleanup, err = d.mountCheckpoint(s, toVersion)
+		toPath, toCleanup, err = d.mountCheckpoint(toVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to mount v%d: %w", toVersion, err)
 		}
@@ -176,8 +167,8 @@ func (d *Differ) Diff(storeName string, fromVersion, toVersion int) (*Result, er
 
 // mountCheckpoint creates a temp bundle from checkpoint bands and mounts it
 // Returns the mount path and a cleanup function
-func (d *Differ) mountCheckpoint(s *db.Store, version int) (string, func() error, error) {
-	checkpointsPath := d.store.GetCheckpointsPath(s)
+func (d *Differ) mountCheckpoint(version int) (string, func() error, error) {
+	checkpointsPath := d.store.GetCheckpointsPath(d.storeObj)
 	checkpointPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
 	// Verify checkpoint exists
@@ -196,7 +187,7 @@ func (d *Differ) mountCheckpoint(s *db.Store, version int) (string, func() error
 	}
 
 	// Copy metadata from original bundle (Info.plist and token)
-	if err := d.createTempBundle(tmpBundle, checkpointPath, s); err != nil {
+	if err := d.createTempBundle(tmpBundle, checkpointPath); err != nil {
 		os.RemoveAll(tmpBundle)
 		return "", nil, fmt.Errorf("failed to create temp bundle: %w", err)
 	}
@@ -228,9 +219,9 @@ func (d *Differ) mountCheckpoint(s *db.Store, version int) (string, func() error
 }
 
 // createTempBundle creates a temp sparse bundle structure from checkpoint bands
-func (d *Differ) createTempBundle(tmpBundle, checkpointPath string, s *db.Store) error {
+func (d *Differ) createTempBundle(tmpBundle, checkpointPath string) error {
 	// Copy Info.plist from original bundle
-	origBundle := s.BundlePath
+	origBundle := d.storeObj.BundlePath
 	infoPlist := filepath.Join(origBundle, "Info.plist")
 	if err := copyFile(infoPlist, filepath.Join(tmpBundle, "Info.plist")); err != nil {
 		return fmt.Errorf("failed to copy Info.plist: %w", err)
@@ -460,18 +451,9 @@ func (d *Differ) ShowFileDiff(path1, path2, relPath string) error {
 }
 
 // DiffFile performs a diff of a specific file between versions
-func (d *Differ) DiffFile(storeName string, fromVersion, toVersion int, relPath string) error {
-	// Get store info
-	s, err := d.store.Get(storeName)
-	if err != nil {
-		return err
-	}
-	if s == nil {
-		return fmt.Errorf("store '%s' not found", storeName)
-	}
-
+func (d *Differ) DiffFile(fromVersion, toVersion int, relPath string) error {
 	// Mount fromVersion
-	fromPath, fromCleanup, err := d.mountCheckpoint(s, fromVersion)
+	fromPath, fromCleanup, err := d.mountCheckpoint(fromVersion)
 	if err != nil {
 		return fmt.Errorf("failed to mount v%d: %w", fromVersion, err)
 	}
@@ -482,13 +464,13 @@ func (d *Differ) DiffFile(storeName string, fromVersion, toVersion int, relPath 
 	// Get toPath
 	var toPath string
 	if toVersion == 0 {
-		if !d.store.IsMounted(s.MountPath) {
+		if !d.store.IsMounted(d.storeObj.MountPath) {
 			return fmt.Errorf("store must be mounted to diff against current state")
 		}
-		toPath = s.MountPath
+		toPath = d.storeObj.MountPath
 	} else {
 		var toCleanup func() error
-		toPath, toCleanup, err = d.mountCheckpoint(s, toVersion)
+		toPath, toCleanup, err = d.mountCheckpoint(toVersion)
 		if err != nil {
 			return fmt.Errorf("failed to mount v%d: %w", toVersion, err)
 		}

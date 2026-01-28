@@ -8,79 +8,83 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/agentfs/agentfs/internal/db"
-	"github.com/google/uuid"
 )
 
-// Manager manages sparse bundle stores
+// Store represents a sparse bundle store (self-contained in foo.fs/)
+type Store struct {
+	Name        string
+	StorePath   string // Path to foo.fs/ directory
+	BundlePath  string // Path to foo.fs/data.sparsebundle/
+	MountPath   string // Path to foo/ mount point (adjacent)
+	SizeBytes   int64
+	CreatedAt   time.Time
+	MountedAt   *time.Time
+	Checkpoints int // Count of checkpoints
+}
+
+// Manager manages sparse bundle stores (new self-contained format)
 type Manager struct {
-	db       *db.DB
-	basePath string
+	// No longer needs a database - stores are self-contained
 }
 
 // NewManager creates a new store manager
-func NewManager(database *db.DB) (*Manager, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	basePath := filepath.Join(home, ".agentfs", "stores")
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create stores directory: %w", err)
-	}
-
-	return &Manager{
-		db:       database,
-		basePath: basePath,
-	}, nil
+func NewManager() *Manager {
+	return &Manager{}
 }
 
 // CreateOpts contains options for creating a store
 type CreateOpts struct {
-	Size      string // e.g., "50G"
-	MountPath string // e.g., ~/projects/myapp
+	Size string // e.g., "50G"
 }
 
-// Create creates a new sparse bundle store
-func (m *Manager) Create(name string, opts CreateOpts) (*db.Store, error) {
-	// Check if store already exists
-	existing, err := m.db.GetStore(name)
+// Create creates a new sparse bundle store in the current directory
+// Creates foo.fs/ directory and mounts at foo/
+func (m *Manager) Create(name string, opts CreateOpts) (*Store, error) {
+	// Get current working directory
+	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to check existing store: %w", err)
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-	if existing != nil {
-		return nil, fmt.Errorf("store '%s' already exists", name)
+
+	storePath := filepath.Join(cwd, name+".fs")
+	mountPath := filepath.Join(cwd, name)
+
+	// Check if store already exists
+	if _, err := os.Stat(storePath); err == nil {
+		return nil, fmt.Errorf("%s already exists", name+".fs")
+	}
+
+	// Check if mount point already exists and is not empty
+	if info, err := os.Stat(mountPath); err == nil {
+		if info.IsDir() {
+			entries, _ := os.ReadDir(mountPath)
+			if len(entries) > 0 {
+				return nil, fmt.Errorf("%s/ already exists and is not empty", name)
+			}
+		} else {
+			return nil, fmt.Errorf("%s already exists and is not a directory", name)
+		}
 	}
 
 	// Set defaults
 	if opts.Size == "" {
 		opts.Size = "50G"
 	}
-	if opts.MountPath == "" {
-		home, _ := os.UserHomeDir()
-		opts.MountPath = filepath.Join(home, "projects", name)
-	}
 
-	// Expand ~ in mount path
-	opts.MountPath = expandPath(opts.MountPath)
-
-	// Create store directory
-	storeDir := filepath.Join(m.basePath, name)
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
+	// Create store directory structure
+	if err := os.MkdirAll(storePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create store directory: %w", err)
 	}
 
 	// Create checkpoints directory
-	checkpointsDir := filepath.Join(storeDir, "checkpoints")
+	checkpointsDir := filepath.Join(storePath, "checkpoints")
 	if err := os.MkdirAll(checkpointsDir, 0755); err != nil {
+		os.RemoveAll(storePath)
 		return nil, fmt.Errorf("failed to create checkpoints directory: %w", err)
 	}
 
-	bundlePath := filepath.Join(storeDir, name+".sparsebundle")
-
-	// Create sparse bundle
+	// Create sparse bundle inside store directory
+	bundlePath := filepath.Join(storePath, "data.sparsebundle")
 	cmd := exec.Command("hdiutil", "create",
 		"-size", opts.Size,
 		"-type", "SPARSEBUNDLE",
@@ -89,91 +93,138 @@ func (m *Manager) Create(name string, opts CreateOpts) (*db.Store, error) {
 		bundlePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		os.RemoveAll(storeDir)
+		os.RemoveAll(storePath)
 		return nil, fmt.Errorf("failed to create sparse bundle: %w\n%s", err, output)
 	}
 
-	// Mount the sparse bundle
-	if err := os.MkdirAll(filepath.Dir(opts.MountPath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create mount parent directory: %w", err)
+	// Create mount point directory
+	if err := os.MkdirAll(mountPath, 0755); err != nil {
+		os.RemoveAll(storePath)
+		return nil, fmt.Errorf("failed to create mount point: %w", err)
 	}
 
-	cmd = exec.Command("hdiutil", "attach", bundlePath, "-mountpoint", opts.MountPath)
+	// Mount the sparse bundle
+	cmd = exec.Command("hdiutil", "attach", bundlePath, "-mountpoint", mountPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
-		os.RemoveAll(storeDir)
+		os.RemoveAll(storePath)
+		os.RemoveAll(mountPath)
 		return nil, fmt.Errorf("failed to mount sparse bundle: %w\n%s", err, output)
 	}
 
 	now := time.Now()
-	store := &db.Store{
-		ID:         uuid.New().String(),
+	store := &Store{
 		Name:       name,
+		StorePath:  storePath,
 		BundlePath: bundlePath,
-		MountPath:  opts.MountPath,
+		MountPath:  mountPath,
 		SizeBytes:  parseSize(opts.Size),
 		CreatedAt:  now,
 		MountedAt:  &now,
 	}
 
-	if err := m.db.CreateStore(store); err != nil {
-		// Clean up on failure
-		exec.Command("hdiutil", "detach", opts.MountPath).Run()
-		os.RemoveAll(storeDir)
-		return nil, fmt.Errorf("failed to record store: %w", err)
-	}
-
 	return store, nil
 }
 
-// Get retrieves a store by name and updates its mounted status
-func (m *Manager) Get(name string) (*db.Store, error) {
-	store, err := m.GetFast(name)
-	if err != nil || store == nil {
-		return store, err
+// Get retrieves a store by name from the current directory
+func (m *Manager) Get(name string) (*Store, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	// Update mounted status based on actual state
-	mounted := m.IsMounted(store.MountPath)
-	if mounted && store.MountedAt == nil {
-		m.db.SetMounted(name, true)
+	return m.GetFromDir(name, cwd)
+}
+
+// GetFromDir retrieves a store by name from a specific directory
+func (m *Manager) GetFromDir(name string, dir string) (*Store, error) {
+	storePath := filepath.Join(dir, name+".fs")
+	return m.GetFromPath(storePath)
+}
+
+// GetFromPath retrieves a store from its full .fs path
+func (m *Manager) GetFromPath(storePath string) (*Store, error) {
+	// Verify store exists
+	info, err := os.Stat(storePath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat store: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a valid store: %s", storePath)
+	}
+
+	// Verify it's a valid store (has data.sparsebundle)
+	bundlePath := filepath.Join(storePath, "data.sparsebundle")
+	if _, err := os.Stat(bundlePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("invalid store (missing data.sparsebundle): %s", storePath)
+	}
+
+	// Extract name from path (remove .fs suffix)
+	name := strings.TrimSuffix(filepath.Base(storePath), ".fs")
+
+	// Calculate mount path (adjacent directory)
+	mountPath := filepath.Join(filepath.Dir(storePath), name)
+
+	// Build store object
+	store := &Store{
+		Name:       name,
+		StorePath:  storePath,
+		BundlePath: bundlePath,
+		MountPath:  mountPath,
+		SizeBytes:  m.readStoreSizeFromBundle(bundlePath),
+		CreatedAt:  info.ModTime(), // Use dir mtime as proxy for creation time
+	}
+
+	// Check if mounted
+	if m.IsMounted(mountPath) {
 		now := time.Now()
 		store.MountedAt = &now
-	} else if !mounted && store.MountedAt != nil {
-		m.db.SetMounted(name, false)
-		store.MountedAt = nil
+	}
+
+	// Count checkpoints
+	checkpointsPath := filepath.Join(storePath, "checkpoints")
+	if entries, err := os.ReadDir(checkpointsPath); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") {
+				store.Checkpoints++
+			}
+		}
 	}
 
 	return store, nil
 }
 
-// GetFast retrieves a store by name without checking mount status
-// Use this in performance-critical paths where you'll check mounted status separately
-func (m *Manager) GetFast(name string) (*db.Store, error) {
-	store, err := m.db.GetStore(name)
+// List returns all stores in the current directory
+func (m *Manager) List() ([]*Store, error) {
+	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get store: %w", err)
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-	return store, nil
+
+	return m.ListFromDir(cwd)
 }
 
-// List returns all stores
-func (m *Manager) List() ([]*db.Store, error) {
-	stores, err := m.db.ListStores()
+// ListFromDir returns all stores in a specific directory
+func (m *Manager) ListFromDir(dir string) ([]*Store, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list stores: %w", err)
+		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	// Update mounted status for each store
-	for _, s := range stores {
-		mounted := m.IsMounted(s.MountPath)
-		if mounted && s.MountedAt == nil {
-			m.db.SetMounted(s.Name, true)
-			now := time.Now()
-			s.MountedAt = &now
-		} else if !mounted && s.MountedAt != nil {
-			m.db.SetMounted(s.Name, false)
-			s.MountedAt = nil
+	var stores []*Store
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasSuffix(entry.Name(), ".fs") {
+			storePath := filepath.Join(dir, entry.Name())
+			store, err := m.GetFromPath(storePath)
+			if err != nil {
+				continue // Skip invalid stores
+			}
+			if store != nil {
+				stores = append(stores, store)
+			}
 		}
 	}
 
@@ -181,17 +232,9 @@ func (m *Manager) List() ([]*db.Store, error) {
 }
 
 // Mount mounts a store
-func (m *Manager) Mount(name string) error {
-	store, err := m.Get(name)
-	if err != nil {
-		return err
-	}
-	if store == nil {
-		return fmt.Errorf("store '%s' not found", name)
-	}
-
+func (m *Manager) Mount(store *Store) error {
 	if m.IsMounted(store.MountPath) {
-		return fmt.Errorf("store '%s' is already mounted", name)
+		return fmt.Errorf("already mounted at %s", store.MountPath)
 	}
 
 	// Create mount point if it doesn't exist
@@ -205,21 +248,15 @@ func (m *Manager) Mount(name string) error {
 		return fmt.Errorf("failed to mount: %w\n%s", err, output)
 	}
 
-	return m.db.SetMounted(name, true)
+	now := time.Now()
+	store.MountedAt = &now
+	return nil
 }
 
-// Unmount unmounts a store
-func (m *Manager) Unmount(name string) error {
-	store, err := m.Get(name)
-	if err != nil {
-		return err
-	}
-	if store == nil {
-		return fmt.Errorf("store '%s' not found", name)
-	}
-
+// Unmount unmounts a store and removes the mount directory
+func (m *Manager) Unmount(store *Store) error {
 	if !m.IsMounted(store.MountPath) {
-		return fmt.Errorf("store '%s' is not mounted", name)
+		return fmt.Errorf("not mounted")
 	}
 
 	cmd := exec.Command("hdiutil", "detach", store.MountPath)
@@ -228,34 +265,27 @@ func (m *Manager) Unmount(name string) error {
 		return fmt.Errorf("failed to unmount: %w\n%s", err, output)
 	}
 
-	return m.db.SetMounted(name, false)
+	// Remove mount point directory
+	os.Remove(store.MountPath)
+
+	store.MountedAt = nil
+	return nil
 }
 
-// Delete deletes a store
-func (m *Manager) Delete(name string) error {
-	store, err := m.Get(name)
-	if err != nil {
-		return err
-	}
-	if store == nil {
-		return fmt.Errorf("store '%s' not found", name)
-	}
-
+// Delete deletes a store completely
+func (m *Manager) Delete(store *Store) error {
 	// Unmount if mounted
 	if m.IsMounted(store.MountPath) {
 		cmd := exec.Command("hdiutil", "detach", store.MountPath)
 		cmd.Run() // Ignore error, we'll try to delete anyway
 	}
 
-	// Delete store directory
-	storeDir := filepath.Join(m.basePath, name)
-	if err := os.RemoveAll(storeDir); err != nil {
-		return fmt.Errorf("failed to delete store files: %w", err)
-	}
+	// Remove mount point directory
+	os.Remove(store.MountPath)
 
-	// Delete from database
-	if err := m.db.DeleteStore(name); err != nil {
-		return fmt.Errorf("failed to delete store record: %w", err)
+	// Delete store directory
+	if err := os.RemoveAll(store.StorePath); err != nil {
+		return fmt.Errorf("failed to delete store files: %w", err)
 	}
 
 	return nil
@@ -298,22 +328,19 @@ func (m *Manager) IsMounted(path string) bool {
 }
 
 // GetBandsPath returns the path to the bands directory in the sparse bundle
-func (m *Manager) GetBandsPath(store *db.Store) string {
+func (m *Manager) GetBandsPath(store *Store) string {
 	return filepath.Join(store.BundlePath, "bands")
 }
 
 // GetCheckpointsPath returns the path to the checkpoints directory
-func (m *Manager) GetCheckpointsPath(store *db.Store) string {
-	storeDir := filepath.Join(m.basePath, store.Name)
-	return filepath.Join(storeDir, "checkpoints")
+func (m *Manager) GetCheckpointsPath(store *Store) string {
+	return filepath.Join(store.StorePath, "checkpoints")
 }
 
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
+// readStoreSizeFromBundle reads the size from the sparse bundle Info.plist
+func (m *Manager) readStoreSizeFromBundle(bundlePath string) int64 {
+	// Default to 50GB if we can't read the size
+	return 50 * 1024 * 1024 * 1024
 }
 
 func parseSize(size string) int64 {

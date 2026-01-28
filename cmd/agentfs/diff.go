@@ -31,9 +31,19 @@ Flags:
   --name-only   Just list changed file names`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, err := context.MustResolveStore(storeFlag, "")
+		// Resolve store
+		storePath, err := context.MustResolveStore(storeFlag, "")
 		if err != nil {
 			exitWithError(ExitUsageError, "%v", err)
+		}
+
+		// Get store info
+		s, err := storeManager.GetFromPath(storePath)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if s == nil {
+			exitWithError(ExitStoreNotFound, "store not found")
 		}
 
 		// Parse args
@@ -72,18 +82,18 @@ Flags:
 		// toVersion == 0 means compare against current
 
 		// Create differ
-		differ := diff.NewDiffer(storeManager, database)
+		differ := diff.NewDiffer(storeManager, s)
 
 		// Handle specific file diff
 		if specificPath != "" {
-			if err := differ.DiffFile(name, fromVersion, toVersion, specificPath); err != nil {
+			if err := differ.DiffFile(fromVersion, toVersion, specificPath); err != nil {
 				exitWithError(ExitError, "%v", err)
 			}
 			return
 		}
 
 		// Perform diff
-		result, err := differ.Diff(name, fromVersion, toVersion)
+		result, err := differ.Diff(fromVersion, toVersion)
 		if err != nil {
 			exitWithError(ExitError, "%v", err)
 		}

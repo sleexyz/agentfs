@@ -13,17 +13,19 @@ import (
 	"github.com/agentfs/agentfs/internal/store"
 )
 
-// Manager manages checkpoints
+// Manager manages checkpoints for a store
 type Manager struct {
-	db    *db.DB
-	store *store.Manager
+	store    *store.Manager
+	database *db.DB      // Per-store database
+	s        *store.Store // Current store
 }
 
-// NewManager creates a new checkpoint manager
-func NewManager(database *db.DB, storeManager *store.Manager) *Manager {
+// NewManager creates a new checkpoint manager for a specific store
+func NewManager(storeManager *store.Manager, database *db.DB, s *store.Store) *Manager {
 	return &Manager{
-		db:    database,
-		store: storeManager,
+		store:    storeManager,
+		database: database,
+		s:        s,
 	}
 }
 
@@ -33,37 +35,27 @@ type CreateOpts struct {
 }
 
 // Create creates a new checkpoint
-func (m *Manager) Create(storeName string, opts CreateOpts) (*db.Checkpoint, time.Duration, error) {
+func (m *Manager) Create(opts CreateOpts) (*db.Checkpoint, time.Duration, error) {
 	start := time.Now()
 
-	// Get the store (use GetFast for performance)
-	s, err := m.store.GetFast(storeName)
-	if err != nil {
-		return nil, 0, err
-	}
-	if s == nil {
-		return nil, 0, fmt.Errorf("store '%s' not found", storeName)
-	}
-
 	// Check if mounted
-	if !m.store.IsMounted(s.MountPath) {
-		return nil, 0, fmt.Errorf("store '%s' is not mounted", storeName)
+	if !m.store.IsMounted(m.s.MountPath) {
+		return nil, 0, fmt.Errorf("store '%s' is not mounted", m.s.Name)
 	}
 
 	// Sync filesystem buffers for the mount point
-	// Using diskutil quiet sync for specific volume is faster than global sync
-	cmd := exec.Command("sync", "-f", s.MountPath)
+	cmd := exec.Command("sync", "-f", m.s.MountPath)
 	cmd.Run() // Ignore errors, sync is best-effort
 
 	// Get next version number
-	version, err := m.db.GetNextVersion(s.ID)
+	version, err := m.database.GetNextVersion()
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get next version: %w", err)
 	}
 
 	// Get paths
-	bandsPath := m.store.GetBandsPath(s)
-	checkpointsPath := m.store.GetCheckpointsPath(s)
+	bandsPath := m.store.GetBandsPath(m.s)
+	checkpointsPath := m.store.GetCheckpointsPath(m.s)
 	versionPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
 	// Clone bands directory using APFS reflink (cp -Rc)
@@ -84,12 +76,11 @@ func (m *Manager) Create(storeName string, opts CreateOpts) (*db.Checkpoint, tim
 
 	// Record in database
 	cp := &db.Checkpoint{
-		StoreID:   s.ID,
 		Version:   version,
 		Message:   opts.Message,
 		CreatedAt: time.Now(),
 	}
-	if err := m.db.CreateCheckpoint(cp); err != nil {
+	if err := m.database.CreateCheckpoint(cp); err != nil {
 		// Clean up the checkpoint directory
 		os.RemoveAll(versionPath)
 		return nil, 0, fmt.Errorf("failed to record checkpoint: %w", err)
@@ -98,44 +89,20 @@ func (m *Manager) Create(storeName string, opts CreateOpts) (*db.Checkpoint, tim
 	return cp, time.Since(start), nil
 }
 
-// List returns all checkpoints for a store
-func (m *Manager) List(storeName string, limit int) ([]*db.Checkpoint, error) {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("store '%s' not found", storeName)
-	}
-
-	return m.db.ListCheckpoints(s.ID, limit)
+// List returns all checkpoints
+func (m *Manager) List(limit int) ([]*db.Checkpoint, error) {
+	return m.database.ListCheckpoints(limit)
 }
 
 // Get retrieves a checkpoint by version
-func (m *Manager) Get(storeName string, version int) (*db.Checkpoint, error) {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("store '%s' not found", storeName)
-	}
-
-	return m.db.GetCheckpoint(s.ID, version)
+func (m *Manager) Get(version int) (*db.Checkpoint, error) {
+	return m.database.GetCheckpoint(version)
 }
 
 // Delete deletes a checkpoint
-func (m *Manager) Delete(storeName string, version int) error {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return err
-	}
-	if s == nil {
-		return fmt.Errorf("store '%s' not found", storeName)
-	}
-
+func (m *Manager) Delete(version int) error {
 	// Delete checkpoint directory
-	checkpointsPath := m.store.GetCheckpointsPath(s)
+	checkpointsPath := m.store.GetCheckpointsPath(m.s)
 	versionPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
 	if err := os.RemoveAll(versionPath); err != nil {
@@ -143,7 +110,7 @@ func (m *Manager) Delete(storeName string, version int) error {
 	}
 
 	// Delete from database
-	if err := m.db.DeleteCheckpoint(s.ID, version); err != nil {
+	if err := m.database.DeleteCheckpoint(version); err != nil {
 		return fmt.Errorf("failed to delete checkpoint record: %w", err)
 	}
 
@@ -151,20 +118,11 @@ func (m *Manager) Delete(storeName string, version int) error {
 }
 
 // Restore restores a store to a checkpoint
-func (m *Manager) Restore(storeName string, version int, createPreRestore bool) (*db.Checkpoint, time.Duration, error) {
+func (m *Manager) Restore(version int, createPreRestore bool) (*db.Checkpoint, time.Duration, error) {
 	start := time.Now()
 
-	// Get the store
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return nil, 0, err
-	}
-	if s == nil {
-		return nil, 0, fmt.Errorf("store '%s' not found", storeName)
-	}
-
 	// Get the target checkpoint
-	cp, err := m.db.GetCheckpoint(s.ID, version)
+	cp, err := m.database.GetCheckpoint(version)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get checkpoint: %w", err)
 	}
@@ -172,7 +130,7 @@ func (m *Manager) Restore(storeName string, version int, createPreRestore bool) 
 		return nil, 0, fmt.Errorf("checkpoint v%d not found", version)
 	}
 
-	checkpointsPath := m.store.GetCheckpointsPath(s)
+	checkpointsPath := m.store.GetCheckpointsPath(m.s)
 	targetPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
 	// Verify checkpoint exists on disk
@@ -181,30 +139,30 @@ func (m *Manager) Restore(storeName string, version int, createPreRestore bool) 
 	}
 
 	// Create pre-restore checkpoint if requested
-	if createPreRestore && m.store.IsMounted(s.MountPath) {
-		_, _, err := m.Create(storeName, CreateOpts{Message: "pre-restore"})
+	if createPreRestore && m.store.IsMounted(m.s.MountPath) {
+		_, _, err := m.Create(CreateOpts{Message: "pre-restore"})
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to create pre-restore checkpoint: %w", err)
 		}
 	}
 
 	// Unmount the store
-	wasMounted := m.store.IsMounted(s.MountPath)
+	wasMounted := m.store.IsMounted(m.s.MountPath)
 	if wasMounted {
-		if err := m.store.Unmount(storeName); err != nil {
+		if err := m.store.Unmount(m.s); err != nil {
 			return nil, 0, fmt.Errorf("failed to unmount: %w", err)
 		}
 	}
 
 	// Swap bands
-	bandsPath := m.store.GetBandsPath(s)
+	bandsPath := m.store.GetBandsPath(m.s)
 	backupPath := bandsPath + ".pre-restore"
 
 	// Backup current bands
 	if err := os.Rename(bandsPath, backupPath); err != nil {
 		// Try to remount and fail
 		if wasMounted {
-			m.store.Mount(storeName)
+			m.store.Mount(m.s)
 		}
 		return nil, 0, fmt.Errorf("failed to backup current bands: %w", err)
 	}
@@ -218,14 +176,14 @@ func (m *Manager) Restore(storeName string, version int, createPreRestore bool) 
 		os.RemoveAll(bandsPath)
 		os.Rename(backupPath, bandsPath)
 		if wasMounted {
-			m.store.Mount(storeName)
+			m.store.Mount(m.s)
 		}
 		return nil, 0, fmt.Errorf("failed to restore checkpoint: %w\n%s", err, output)
 	}
 
 	// Remount
 	if wasMounted {
-		if err := m.store.Mount(storeName); err != nil {
+		if err := m.store.Mount(m.s); err != nil {
 			return nil, 0, fmt.Errorf("failed to remount after restore: %w", err)
 		}
 	}
@@ -234,6 +192,16 @@ func (m *Manager) Restore(storeName string, version int, createPreRestore bool) 
 	os.RemoveAll(backupPath)
 
 	return cp, time.Since(start), nil
+}
+
+// Count returns the number of checkpoints
+func (m *Manager) Count() (int, error) {
+	return m.database.CountCheckpoints()
+}
+
+// GetLatest returns the most recent checkpoint
+func (m *Manager) GetLatest() (*db.Checkpoint, error) {
+	return m.database.GetLatestCheckpoint()
 }
 
 // DiffResult represents the result of a diff operation
@@ -245,31 +213,23 @@ type DiffResult struct {
 
 // FileChange represents a modified file
 type FileChange struct {
-	Path      string
+	Path         string
 	LinesAdded   int
 	LinesDeleted int
 }
 
 // Diff compares two checkpoints or current state vs checkpoint
-func (m *Manager) Diff(storeName string, fromVersion, toVersion int) (*DiffResult, error) {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("store '%s' not found", storeName)
-	}
-
-	checkpointsPath := m.store.GetCheckpointsPath(s)
+func (m *Manager) Diff(fromVersion, toVersion int) (*DiffResult, error) {
+	checkpointsPath := m.store.GetCheckpointsPath(m.s)
 
 	var fromPath, toPath string
 
 	if fromVersion == 0 {
 		// Current state
-		if !m.store.IsMounted(s.MountPath) {
+		if !m.store.IsMounted(m.s.MountPath) {
 			return nil, fmt.Errorf("store must be mounted to diff against current state")
 		}
-		fromPath = s.MountPath
+		fromPath = m.s.MountPath
 	} else {
 		fromPath = filepath.Join(checkpointsPath, fmt.Sprintf("v%d", fromVersion))
 		if _, err := os.Stat(fromPath); os.IsNotExist(err) {
@@ -279,20 +239,16 @@ func (m *Manager) Diff(storeName string, fromVersion, toVersion int) (*DiffResul
 
 	if toVersion == 0 {
 		// Current state
-		if !m.store.IsMounted(s.MountPath) {
+		if !m.store.IsMounted(m.s.MountPath) {
 			return nil, fmt.Errorf("store must be mounted to diff against current state")
 		}
-		toPath = s.MountPath
+		toPath = m.s.MountPath
 	} else {
 		toPath = filepath.Join(checkpointsPath, fmt.Sprintf("v%d", toVersion))
 		if _, err := os.Stat(toPath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("checkpoint v%d not found", toVersion)
 		}
 	}
-
-	// For sparse bundle bands, we need to mount both to compare
-	// For now, return a simplified diff based on file existence
-	// A full implementation would mount the sparse bundles and compare
 
 	result := &DiffResult{}
 
@@ -331,32 +287,6 @@ func (m *Manager) Diff(storeName string, fromVersion, toVersion int) (*DiffResul
 	}
 
 	return result, nil
-}
-
-// Count returns the number of checkpoints for a store
-func (m *Manager) Count(storeName string) (int, error) {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return 0, err
-	}
-	if s == nil {
-		return 0, fmt.Errorf("store '%s' not found", storeName)
-	}
-
-	return m.db.CountCheckpoints(s.ID)
-}
-
-// GetLatest returns the most recent checkpoint for a store
-func (m *Manager) GetLatest(storeName string) (*db.Checkpoint, error) {
-	s, err := m.store.Get(storeName)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("store '%s' not found", storeName)
-	}
-
-	return m.db.GetLatestCheckpoint(s.ID)
 }
 
 func extractOnlyInPath(line, basePath string) string {

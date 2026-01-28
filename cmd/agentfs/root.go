@@ -4,20 +4,18 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/agentfs/agentfs/internal/checkpoint"
-	"github.com/agentfs/agentfs/internal/db"
 	"github.com/agentfs/agentfs/internal/store"
 	"github.com/spf13/cobra"
 )
 
 // Exit codes
 const (
-	ExitSuccess        = 0
-	ExitError          = 1
-	ExitUsageError     = 2
-	ExitStoreNotFound  = 3
-	ExitCPNotFound     = 4
-	ExitMountFailed    = 5
+	ExitSuccess       = 0
+	ExitError         = 1
+	ExitUsageError    = 2
+	ExitStoreNotFound = 3
+	ExitCPNotFound    = 4
+	ExitMountFailed   = 5
 )
 
 var (
@@ -26,10 +24,8 @@ var (
 	jsonFlag  bool
 	forceFlag bool
 
-	// Shared instances
-	database     *db.DB
+	// Shared store manager (no global database needed anymore)
 	storeManager *store.Manager
-	cpManager    *checkpoint.Manager
 )
 
 var rootCmd = &cobra.Command{
@@ -37,6 +33,8 @@ var rootCmd = &cobra.Command{
 	Short: "Instant checkpoint and restore for macOS projects",
 	Long: `AgentFS provides instant checkpointing (~20ms) and fast restore (<500ms)
 for macOS projects using sparse bundles and APFS reflinks.
+
+Stores are self-contained in foo.fs/ directories with adjacent foo/ mount points.
 
 Use 'agentfs init <name>' to create a new store, then 'agentfs checkpoint create'
 to create checkpoints. Restore with 'agentfs restore <version>'.`,
@@ -46,37 +44,15 @@ to create checkpoints. Restore with 'agentfs restore <version>'.`,
 			return nil
 		}
 
-		// Initialize database
-		dbPath, err := db.DefaultPath()
-		if err != nil {
-			return err
-		}
-
-		database, err = db.Open(dbPath)
-		if err != nil {
-			return fmt.Errorf("failed to open database: %w", err)
-		}
-
-		// Initialize store manager
-		storeManager, err = store.NewManager(database)
-		if err != nil {
-			return fmt.Errorf("failed to initialize store manager: %w", err)
-		}
-
-		// Initialize checkpoint manager
-		cpManager = checkpoint.NewManager(database, storeManager)
+		// Initialize store manager (no database needed - stores are self-contained)
+		storeManager = store.NewManager()
 
 		return nil
-	},
-	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		if database != nil {
-			database.Close()
-		}
 	},
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&storeFlag, "store", "", "override store context")
+	rootCmd.PersistentFlags().StringVar(&storeFlag, "store", "", "specify store name")
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "output as JSON")
 	rootCmd.PersistentFlags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation prompts")
 }
