@@ -28,11 +28,9 @@ v16      Edit justfile (f55a4d56)                  1 minute ago
 
 The core of AgentFS is exceedingly simple: directories are mounted APFS disk images.
 
-Why disk image? Isn't APFS already Copy-on-Write?
+APFS is already COW but the number of operations scale with the number of files. This means `cp -R` operations on directories may still be noticibly slow when containing many files in e.g. `.git` or `node_modules`.
 
-APFS is COW but the number of operations scale with the number of files. This means `cp -R` operations on directories may still be noticibly slow when containing many files in e.g. `.git` or `node_modules`.
-
-We can get around this by operating not on files but on a disk image of the files. This reduces the number of operations from 50k files to ~100 "bands" of a [sparse bundle](https://en.wikipedia.org/wiki/Sparse_image#Sparse_bundle_disk_images), resulting in efficient checkpoint and restore operations.
+One neat trick is that we can compress our work from e.g. 50k files to ~100 "bands" of a [sparse bundle](https://en.wikipedia.org/wiki/Sparse_image#Sparse_bundle_disk_images) disk image, resulting in efficient checkpoint and restore operations.
 
 
 ```
@@ -64,7 +62,7 @@ See [how it works](knowledge/two-layer-apfs.md) for details.
 
 ## Installation
 
-Requires macOS (uses APFS reflinks and sparse bundles).
+Requires macOS.
 
 ```bash
 brew tap sleexyz/tap
