@@ -1,3 +1,3 @@
 # TODO
 
-- [ ] Set up Homebrew Cask distribution
+- [x] Set up Homebrew tap distribution

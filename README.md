@@ -3,6 +3,7 @@
 Seamless, instant checkpoint and restore for agentic workflows on macOS.
 
 ```
+> brew tap sleexyz/tap
 > brew install agentfs
 
 > agentfs manage foo
@@ -57,13 +58,15 @@ See [how it works](knowledge/two-layer-apfs.md) for details.
 Requires macOS (uses APFS reflinks and sparse bundles).
 
 ```bash
-# Clone and build
+brew tap sleexyz/tap
+brew install agentfs
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/sleexyz/agentfs.git
 cd agentfs
-go build -o agentfs ./cmd/agentfs
-
-# Or with nix
-nix develop
 go build -o agentfs ./cmd/agentfs
 ```
 
