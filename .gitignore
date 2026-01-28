@@ -1,6 +1,6 @@
 # Go
 .go/
-agentfs
+/agentfs
 
 # Polo session files
 ralph-*.log
