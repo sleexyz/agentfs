@@ -1,10 +1,34 @@
 # AgentFS
 
-Instant checkpoint and restore for agentic workflows on macOS.
-
-AgentFS uses a two-layer APFS architecture to checkpoint entire projects in ~20ms and restore in ~500ms — regardless of project size.
+Seamless, instant checkpoint and restore for agentic workflows on macOS.
 
 ```
+> brew install agentfs
+
+> agentfs manage foo
+> cd foo
+> agentfs checkpoint
+> agentfs list
+```
+
+The core of AgentFS is exceedingly simple: directories are mounted APFS disk images. Why disk images:
+
+Although APFS is already Copy-On-Write, the number of operations scale with the number of files, so `cp -R` operations on directories may still be noticibly slow when containing many files in e.g. `.git` or `node_modules`.
+
+However, if we clone not the files but a disk image, this reduces the number of operations from 50k files to ~100 "bands" of [sparse bundle](https://en.wikipedia.org/wiki/Sparse_image#Sparse_bundle_disk_images), giving us extremely fast checkpoint and restore.
+
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Layer 2: Inner APFS (where you work)                   │
+│                                                         │
+│  myproject/                                             │
+│  ├── src/                                               │
+│  ├── node_modules/          ← 36k files                 │
+│  └── .git/                                              │
+└───────────────────────────┬─────────────────────────────┘
+                            │ mount
+                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Layer 1: Host APFS                                     │
 │                                                         │
@@ -13,20 +37,13 @@ AgentFS uses a two-layer APFS architecture to checkpoint entire projects in ~20m
 │  └── checkpoints/                                       │
 │      ├── v1/                    ← COW clone of bands    │
 │      └── v2/                    ← COW clone of bands    │
-└───────────────────────────┬─────────────────────────────┘
-                            │ mount
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│  Layer 2: Inner APFS (where you work)                   │
-│                                                         │
-│  myproject/                                             │
-│  ├── src/                                               │
-│  ├── node_modules/          ← 36k files                 │
-│  └── .git/                                              │
 └─────────────────────────────────────────────────────────┘
 ```
 
-Checkpoints clone ~100 bands instead of 36k files. APFS handles deduplication automatically — no garbage collection needed. See [how it works](knowledge/two-layer-apfs.md) for details.
+Assuming our host filesystem is APFS as well: because APFS is COW, cloning the filesystem for checkpointing is as simple as a `cp -R` on the bands of the disk image.
+
+See [how it works](knowledge/two-layer-apfs.md) for details.
+
 
 ## Features
 
