@@ -1,0 +1,259 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	cpkg "github.com/agentfs/agentfs/internal/checkpoint"
+	"github.com/agentfs/agentfs/internal/context"
+	"github.com/dustin/go-humanize"
+	"github.com/spf13/cobra"
+)
+
+var checkpointCmd = &cobra.Command{
+	Use:   "checkpoint",
+	Short: "Checkpoint operations",
+	Long:  `Create, list, and manage checkpoints.`,
+}
+
+var cpCreateCmd = &cobra.Command{
+	Use:   "create [message]",
+	Short: "Create a new checkpoint",
+	Long: `Create a new checkpoint of the current state.
+
+Uses APFS reflinks to create instant (~20ms) snapshots of the sparse bundle bands.`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		name, err := context.MustResolveStore(storeFlag, "")
+		if err != nil {
+			exitWithError(ExitUsageError, "%v", err)
+		}
+
+		var message string
+		if len(args) > 0 {
+			message = args[0]
+		}
+
+		fmt.Println("Creating checkpoint...")
+
+		cp, duration, err := cpManager.Create(name, cpkg.CreateOpts{
+			Message: message,
+		})
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+
+		if jsonFlag {
+			type createJSON struct {
+				Version   string `json:"version"`
+				Message   string `json:"message,omitempty"`
+				CreatedAt string `json:"created_at"`
+				DurationMs int64 `json:"duration_ms"`
+			}
+
+			output := createJSON{
+				Version:    fmt.Sprintf("v%d", cp.Version),
+				Message:    cp.Message,
+				CreatedAt:  cp.CreatedAt.Format(time.RFC3339),
+				DurationMs: duration.Milliseconds(),
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(output)
+			return
+		}
+
+		output := fmt.Sprintf("Created v%d", cp.Version)
+		if message != "" {
+			output += fmt.Sprintf(" %q", message)
+		}
+		output += fmt.Sprintf(" (%dms)", duration.Milliseconds())
+		fmt.Println(output)
+	},
+}
+
+var cpListLimit int
+
+var cpListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List checkpoints",
+	Long:  `List all checkpoints for the current store.`,
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		name, err := context.MustResolveStore(storeFlag, "")
+		if err != nil {
+			exitWithError(ExitUsageError, "%v", err)
+		}
+
+		checkpoints, err := cpManager.List(name, cpListLimit)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+
+		if jsonFlag {
+			type cpJSON struct {
+				Version   string `json:"version"`
+				Message   string `json:"message,omitempty"`
+				CreatedAt string `json:"created_at"`
+			}
+
+			var output []cpJSON
+			for _, cp := range checkpoints {
+				output = append(output, cpJSON{
+					Version:   fmt.Sprintf("v%d", cp.Version),
+					Message:   cp.Message,
+					CreatedAt: cp.CreatedAt.Format(time.RFC3339),
+				})
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(output)
+			return
+		}
+
+		if len(checkpoints) == 0 {
+			fmt.Println("No checkpoints found. Use 'agentfs checkpoint create' to create one.")
+			return
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "VERSION\tMESSAGE\tCREATED")
+
+		for _, cp := range checkpoints {
+			message := cp.Message
+			if len(message) > 40 {
+				message = message[:37] + "..."
+			}
+
+			fmt.Fprintf(w, "v%d\t%s\t%s\n",
+				cp.Version,
+				message,
+				humanize.Time(cp.CreatedAt),
+			)
+		}
+		w.Flush()
+	},
+}
+
+var cpInfoCmd = &cobra.Command{
+	Use:   "info <version>",
+	Short: "Show checkpoint details",
+	Long:  `Show detailed information about a specific checkpoint.`,
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		name, err := context.MustResolveStore(storeFlag, "")
+		if err != nil {
+			exitWithError(ExitUsageError, "%v", err)
+		}
+
+		version, err := parseVersion(args[0])
+		if err != nil {
+			exitWithError(ExitUsageError, "invalid version: %v", err)
+		}
+
+		cp, err := cpManager.Get(name, version)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if cp == nil {
+			exitWithError(ExitCPNotFound, "checkpoint v%d not found", version)
+		}
+
+		if jsonFlag {
+			type infoJSON struct {
+				Version   string `json:"version"`
+				Store     string `json:"store"`
+				Message   string `json:"message,omitempty"`
+				CreatedAt string `json:"created_at"`
+			}
+
+			output := infoJSON{
+				Version:   fmt.Sprintf("v%d", cp.Version),
+				Store:     name,
+				Message:   cp.Message,
+				CreatedAt: cp.CreatedAt.Format(time.RFC3339),
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(output)
+			return
+		}
+
+		fmt.Printf("Checkpoint:  v%d\n", cp.Version)
+		fmt.Printf("Store:       %s\n", name)
+		if cp.Message != "" {
+			fmt.Printf("Message:     %s\n", cp.Message)
+		}
+		fmt.Printf("Created:     %s\n", cp.CreatedAt.Format("2006-01-02 15:04:05"))
+	},
+}
+
+var cpDeleteCmd = &cobra.Command{
+	Use:   "delete <version>",
+	Short: "Delete a checkpoint",
+	Long: `Delete a specific checkpoint.
+
+Requires confirmation unless -f/--force is specified.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		name, err := context.MustResolveStore(storeFlag, "")
+		if err != nil {
+			exitWithError(ExitUsageError, "%v", err)
+		}
+
+		version, err := parseVersion(args[0])
+		if err != nil {
+			exitWithError(ExitUsageError, "invalid version: %v", err)
+		}
+
+		cp, err := cpManager.Get(name, version)
+		if err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+		if cp == nil {
+			exitWithError(ExitCPNotFound, "checkpoint v%d not found", version)
+		}
+
+		if !confirmPrompt(fmt.Sprintf("Delete checkpoint v%d?", version)) {
+			fmt.Println("Cancelled")
+			return
+		}
+
+		if err := cpManager.Delete(name, version); err != nil {
+			exitWithError(ExitError, "%v", err)
+		}
+
+		fmt.Printf("Deleted v%d\n", version)
+	},
+}
+
+func init() {
+	cpListCmd.Flags().IntVar(&cpListLimit, "limit", 0, "limit number of results")
+
+	checkpointCmd.AddCommand(cpCreateCmd)
+	checkpointCmd.AddCommand(cpListCmd)
+	checkpointCmd.AddCommand(cpInfoCmd)
+	checkpointCmd.AddCommand(cpDeleteCmd)
+	rootCmd.AddCommand(checkpointCmd)
+}
+
+// parseVersion parses a version string like "v3" or "3" and returns the integer version
+func parseVersion(s string) (int, error) {
+	s = strings.TrimPrefix(s, "v")
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("version must be a number (e.g., v3 or 3)")
+	}
+	if v < 1 {
+		return 0, fmt.Errorf("version must be positive")
+	}
+	return v, nil
+}

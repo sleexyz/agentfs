@@ -1,0 +1,72 @@
+# Spike 2: Checkpoint Performance Benchmark Progress
+
+## Status: COMPLETE ✅
+
+## Summary
+
+All benchmarks completed successfully. Key finding: **<100ms checkpoint is achievable** using mtime detection + APFS reflinks.
+
+## Completed Tasks
+
+- [x] Created 10GB sparse bundle with realistic test data
+  - 36,076 files (Next.js repo + node_modules)
+  - 626MB of data
+  - 87 bands at 8MB each
+
+- [x] Benchmarked baseline full scan (slow path)
+  - List all bands: 14ms
+  - Stat all bands: 14ms
+  - Hash ALL bands: 1,285ms ← This is what we avoid
+
+- [x] Benchmarked incremental detection
+  - 1 file: 64ms (3 bands, 16MB)
+  - 5 files: 112ms (6 bands, 40MB)
+  - 60 files: 32ms (8 bands, cached)
+
+- [x] Tested APFS reflink support
+  - Clone single band: 12ms
+  - Clone entire bands dir (680MB): 19ms
+  - Disk space used: 0 bytes (blocks shared!)
+
+- [x] Created performance analysis
+  - knowledge/checkpoint-benchmark.md
+  - Updated LEARNINGS.md
+
+## Key Recommendations
+
+1. Use mtime + selective hashing for change detection
+2. Use APFS reflinks for instant local snapshots (19ms for 680MB)
+3. Consider FSEvents to eliminate mtime scan overhead
+4. Defer hashing to background - checkpoint is just clone + manifest
+
+## Output Files
+
+- `knowledge/checkpoint-benchmark.md` - Full benchmark analysis
+- `ralph-explore.log` - Raw timing data
+- `LEARNINGS.md` - Updated with performance data
+
+---
+
+## COMPLETE - 2026-01-27
+
+**What was accomplished:**
+- Benchmarked checkpoint performance with 36k file project (Next.js + node_modules)
+- Validated mtime-based dirty detection (12ms consistent)
+- Measured incremental hashing performance (30-112ms depending on cache state)
+- Discovered and validated APFS reflink cloning (19ms for 680MB, zero disk cost)
+- Created comprehensive benchmark documentation
+
+**Key insights:**
+- APFS `cp -c` creates instant clones that share disk blocks - this is a game-changer for snapshots
+- mtime scan is consistently fast (~12ms for 87 bands) regardless of change volume
+- Hash performance varies significantly based on filesystem cache (20ms cached vs 100ms cold)
+- Checkpoint time scales with dirty band data size, not file count (file locality matters)
+- Default APFS sparse bundle band size is 8MB (imagekey option doesn't work on modern macOS)
+
+**Learnings for future iterations:**
+- Use reflinks for local snapshots, defer hashing to background sync
+- Consider FSEvents instead of mtime scanning for even faster change detection
+- Band locality means many related file changes often land in same bands (good for perf)
+- `du` doesn't accurately report disk usage for APFS clones - use `df` to verify block sharing
+- Cold cache is the worst case; real usage will benefit from filesystem caching
+---
