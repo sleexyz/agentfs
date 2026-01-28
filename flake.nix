@@ -25,7 +25,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = [
-            agentfs
+            # agentfs - removed to use global go run wrapper for live development
             pkgs.go
             pkgs.gopls
             pkgs.gotools

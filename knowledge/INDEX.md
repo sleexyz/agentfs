@@ -26,3 +26,9 @@ Index of research documents and spike findings.
 **Tags:** benchmark, comparison, claude-snap, sparse-bundle, apfs-clone, performance
 **Summary:** Head-to-head benchmark comparing agentfs (sparse bundle + band clones) vs claude-snap (direct file clones). agentfs is 23x faster for checkpoints and 7x faster for restores on a 13k file project due to band compression (13,567 files → 124 bands).
 
+---
+
+## content-addressing-spike.md
+**Tags:** content-addressing, sha256, file-hashing, fsevents, incremental, benchmark, sqlite
+**Summary:** Spike validating content-addressed file tracking for Phase 2. Confirms <200ms target achievable for 10k files with 4-worker parallel hashing and mtime-based incremental detection. FSEvents works with sparse bundle mounts.
+
