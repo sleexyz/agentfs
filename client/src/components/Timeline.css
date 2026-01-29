@@ -1,0 +1,84 @@
+.timeline {
+  padding: 16px;
+  overflow-x: auto;
+}
+
+.timeline-empty {
+  color: #666;
+  text-align: center;
+  padding: 16px;
+}
+
+.timeline-track {
+  display: flex;
+  align-items: center;
+  min-width: min-content;
+  padding: 8px 0;
+}
+
+.timeline-marker-container {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.timeline-line {
+  width: 40px;
+  height: 2px;
+  background: #444;
+}
+
+.timeline-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.timeline-marker:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.marker-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #555;
+  border: 2px solid #888;
+  transition: all 0.15s;
+}
+
+.timeline-marker.selected .marker-dot {
+  background: #3794ff;
+  border-color: #3794ff;
+  box-shadow: 0 0 8px rgba(55, 148, 255, 0.5);
+}
+
+.timeline-marker.has-changes .marker-dot {
+  border-color: #dcdcaa;
+}
+
+.timeline-marker.selected.has-changes .marker-dot {
+  border-color: #3794ff;
+}
+
+.marker-label {
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+}
+
+.timeline-marker.selected .marker-label {
+  color: #3794ff;
+  font-weight: 600;
+}
+
+.timeline-marker:hover .marker-label {
+  color: #fff;
+}

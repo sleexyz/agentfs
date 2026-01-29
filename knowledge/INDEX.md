@@ -38,3 +38,21 @@ Index of research documents and spike findings.
 **Tags:** architecture, apfs, cow, sparse-bundle, bands, garbage-collection, checkpoint
 **Summary:** Explains the two-layer APFS architecture (host APFS + inner APFS inside sparse bundle). Documents how this enables instant checkpoints via band-level COW cloning and eliminates the need for garbage collection by delegating reference counting to APFS.
 
+---
+
+## network/reverse-tunneling.md
+**Tags:** networking, reverse-tunnel, cloudflare, frp, bore, ngrok, quic, multiplexing
+**Summary:** Deep technical analysis of reverse tunneling implementations (Cloudflare Tunnel, frp, bore, localtunnel). Covers protocol negotiation, multiplexing, heartbeats, and reconnection strategies.
+
+---
+
+## network/active-registration.md
+**Tags:** service-discovery, consul, eureka, etcd, kubernetes, heartbeat, lease
+**Summary:** Analysis of active registration patterns for service discovery. Examines Consul, Eureka, and etcd implementations including heartbeat mechanisms, failure modes, and self-preservation.
+
+---
+
+## network/environment-injection.md
+**Tags:** 12-factor, port-binding, heroku, cloud-run, fly-io, render, foreman, procfile
+**Summary:** Research on environment variable injection for service discovery. Covers how platforms (Heroku, Cloud Run, Fly.io, Render) assign ports via $PORT, health check patterns, and strategies for apps that don't support environment-based configuration.
+
