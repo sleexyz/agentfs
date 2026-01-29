@@ -12,17 +12,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sleexyz/agentfs/internal/context"
 	"github.com/sleexyz/agentfs/internal/db"
-	"github.com/sleexyz/agentfs/internal/diff"
 	"github.com/spf13/cobra"
 )
 
 var (
-	servePortFlag string
-	serveCorsFlag bool
+	servePortFlag    string
+	serveCorsFlag    bool
+	serveNoCacheFlag bool
+	serveWorkersFlag int
 )
 
 // Index holds the pre-computed data for the timeline visualizer
@@ -84,6 +86,118 @@ type Server struct {
 	staticFS http.FileSystem
 }
 
+// IndexCache holds the cached index data
+type IndexCache struct {
+	Version            int                    `json:"version"`            // Cache format version
+	GeneratedAt        time.Time              `json:"generatedAt"`        // When the cache was generated
+	CheckpointVersions []int                  `json:"checkpointVersions"` // List of checkpoint versions in cache
+	Checkpoints        []CheckpointInfo       `json:"checkpoints"`        // Checkpoint metadata
+	Manifests          map[string]*Manifest   `json:"manifests"`          // "v1" -> manifest
+	Deltas             map[string]*Delta      `json:"deltas"`             // "v1:v2" -> delta
+}
+
+const indexCacheVersion = 1
+const indexCacheFile = "serve-index.json"
+
+// saveIndexCache saves the index to a cache file in the store
+func saveIndexCache(index *Index, storePath string) error {
+	cache := &IndexCache{
+		Version:            indexCacheVersion,
+		GeneratedAt:        time.Now(),
+		CheckpointVersions: make([]int, 0, len(index.Manifests)),
+		Checkpoints:        index.Checkpoints,
+		Manifests:          make(map[string]*Manifest),
+		Deltas:             index.Deltas,
+	}
+
+	// Collect checkpoint versions and convert manifest keys
+	for v, m := range index.Manifests {
+		cache.CheckpointVersions = append(cache.CheckpointVersions, v)
+		cache.Manifests[fmt.Sprintf("v%d", v)] = m
+	}
+	sort.Ints(cache.CheckpointVersions)
+
+	cachePath := filepath.Join(storePath, indexCacheFile)
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal cache: %w", err)
+	}
+
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write cache: %w", err)
+	}
+
+	return nil
+}
+
+// loadIndexCache loads the index cache from disk
+func loadIndexCache(storePath string) (*IndexCache, error) {
+	cachePath := filepath.Join(storePath, indexCacheFile)
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var cache IndexCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, fmt.Errorf("failed to parse cache: %w", err)
+	}
+
+	// Check cache format version
+	if cache.Version != indexCacheVersion {
+		return nil, fmt.Errorf("cache version mismatch: got %d, want %d", cache.Version, indexCacheVersion)
+	}
+
+	return &cache, nil
+}
+
+// isCacheValid checks if the cache is valid for the current checkpoints
+func isCacheValid(cache *IndexCache, currentVersions []int) bool {
+	if cache == nil {
+		return false
+	}
+
+	// Sort current versions for comparison
+	sorted := make([]int, len(currentVersions))
+	copy(sorted, currentVersions)
+	sort.Ints(sorted)
+
+	// Check if the versions match exactly
+	if len(cache.CheckpointVersions) != len(sorted) {
+		return false
+	}
+
+	for i, v := range cache.CheckpointVersions {
+		if v != sorted[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// indexFromCache converts a cache back to an Index
+func indexFromCache(cache *IndexCache, mountPath, storePath, storeName string) *Index {
+	index := &Index{
+		MountPath:   mountPath,
+		StorePath:   storePath,
+		StoreName:   storeName,
+		Checkpoints: cache.Checkpoints,
+		Manifests:   make(map[int]*Manifest),
+		Deltas:      cache.Deltas,
+	}
+
+	// Convert string keys back to int keys
+	for key, m := range cache.Manifests {
+		var v int
+		fmt.Sscanf(key, "v%d", &v)
+		index.Manifests[v] = m
+	}
+
+	return index
+}
+
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Serve timeline visualizer web UI",
@@ -128,16 +242,47 @@ The API endpoints are:
 			exitWithError(ExitError, "store '%s' is not mounted. Run 'agentfs mount' first.", s.Name)
 		}
 
-		fmt.Printf("Building index for %s...\n", s.Name)
+		var index *Index
 		start := time.Now()
 
-		// Build index
-		index, err := buildIndex(storePath, s.MountPath, database)
-		if err != nil {
-			exitWithError(ExitError, "failed to build index: %v", err)
+		// Try to load from cache first (unless --no-cache is set)
+		if !serveNoCacheFlag {
+			cache, cacheErr := loadIndexCache(storePath)
+			if cacheErr == nil {
+				// Get current checkpoint versions to validate cache
+				checkpoints, err := database.ListCheckpoints(0)
+				if err == nil {
+					currentVersions := make([]int, len(checkpoints))
+					for i, cp := range checkpoints {
+						currentVersions[i] = cp.Version
+					}
+
+					if isCacheValid(cache, currentVersions) {
+						index = indexFromCache(cache, s.MountPath, storePath, s.Name)
+						fmt.Printf("Loaded index from cache in %v (%d checkpoints)\n",
+							time.Since(start).Round(time.Millisecond), len(index.Checkpoints))
+					}
+				}
+			}
 		}
 
-		fmt.Printf("Index built in %v (%d checkpoints)\n", time.Since(start).Round(time.Millisecond), len(index.Checkpoints))
+		// Build index if not loaded from cache
+		if index == nil {
+			fmt.Printf("Building index for %s...\n", s.Name)
+
+			index, err = buildIndex(storePath, s.MountPath, database, serveWorkersFlag)
+			if err != nil {
+				exitWithError(ExitError, "failed to build index: %v", err)
+			}
+
+			fmt.Printf("Index built in %v (%d checkpoints)\n",
+				time.Since(start).Round(time.Millisecond), len(index.Checkpoints))
+
+			// Save cache for next time
+			if err := saveIndexCache(index, storePath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save index cache: %v\n", err)
+			}
+		}
 
 		// Create server
 		server := &Server{
@@ -208,11 +353,13 @@ The API endpoints are:
 func init() {
 	serveCmd.Flags().StringVar(&servePortFlag, "port", "3000", "port to serve on")
 	serveCmd.Flags().BoolVar(&serveCorsFlag, "cors", false, "enable CORS headers (for dev mode)")
+	serveCmd.Flags().BoolVar(&serveNoCacheFlag, "no-cache", false, "force rebuild index, ignoring cache")
+	serveCmd.Flags().IntVar(&serveWorkersFlag, "workers", 4, "number of parallel workers for building index")
 	rootCmd.AddCommand(serveCmd)
 }
 
 // buildIndex builds the index by scanning checkpoints and computing deltas
-func buildIndex(storePath, mountPath string, database *db.DB) (*Index, error) {
+func buildIndex(storePath, mountPath string, database *db.DB, workers int) (*Index, error) {
 	storeName := context.StoreNameFromPath(storePath)
 
 	index := &Index{
@@ -238,22 +385,12 @@ func buildIndex(storePath, mountPath string, database *db.DB) (*Index, error) {
 		return checkpoints[i].Version < checkpoints[j].Version
 	})
 
-	// Create differ for mounting checkpoints
-	s, err := storeManager.GetFromPath(storePath)
+	// Build manifests in parallel
+	manifests, err := buildManifestsParallel(checkpoints, storePath, workers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get store: %w", err)
+		return nil, err
 	}
-	differ := diff.NewDiffer(storeManager, s)
-
-	// Build manifests for each checkpoint
-	for _, cp := range checkpoints {
-		manifest, err := buildManifest(differ, cp.Version, storePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to build manifest for v%d: %v\n", cp.Version, err)
-			continue
-		}
-		index.Manifests[cp.Version] = manifest
-	}
+	index.Manifests = manifests
 
 	// Compute deltas between adjacent checkpoints
 	var prevVersion int
@@ -297,8 +434,73 @@ func buildIndex(storePath, mountPath string, database *db.DB) (*Index, error) {
 	return index, nil
 }
 
+// buildManifestsParallel builds manifests for all checkpoints using a worker pool
+func buildManifestsParallel(checkpoints []*db.Checkpoint, storePath string, workers int) (map[int]*Manifest, error) {
+	if workers < 1 {
+		workers = 1
+	}
+
+	manifests := make(map[int]*Manifest)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Semaphore to limit concurrent workers
+	sem := make(chan struct{}, workers)
+
+	// Progress tracking
+	total := len(checkpoints)
+	var completed atomic.Int32
+
+	// Progress printer goroutine (single writer to avoid garbled output)
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				current := completed.Load()
+				fmt.Printf("\rBuilding index... %d/%d checkpoints", current, total)
+			}
+		}
+	}()
+
+	for _, cp := range checkpoints {
+		wg.Add(1)
+		go func(cp *db.Checkpoint) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			manifest, err := buildManifest(cp.Version, storePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nwarning: failed to build manifest for v%d: %v\n", cp.Version, err)
+				return
+			}
+
+			mu.Lock()
+			manifests[cp.Version] = manifest
+			mu.Unlock()
+
+			completed.Add(1)
+		}(cp)
+	}
+
+	wg.Wait()
+	close(done)
+
+	// Final progress update
+	fmt.Printf("\rBuilding index... %d/%d checkpoints\n", completed.Load(), total)
+
+	return manifests, nil
+}
+
 // buildManifest builds a file manifest for a checkpoint version
-func buildManifest(differ *diff.Differ, version int, storePath string) (*Manifest, error) {
+func buildManifest(version int, storePath string) (*Manifest, error) {
 	checkpointsPath := filepath.Join(storePath, "checkpoints")
 	cpPath := filepath.Join(checkpointsPath, fmt.Sprintf("v%d", version))
 
@@ -463,6 +665,9 @@ func computeDelta(from, to *Manifest) *Delta {
 	delta := &Delta{
 		FromVersion: from.Version,
 		ToVersion:   to.Version,
+		Added:       []string{},
+		Modified:    []string{},
+		Deleted:     []string{},
 	}
 
 	// Find modified and deleted files
